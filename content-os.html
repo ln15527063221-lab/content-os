@@ -687,20 +687,7 @@ S.checkDailyReminder = async () => {
     S._lastDailySnapshot = today;
     await S._doBackup('每日快照');
   }
-  // 24h 未导出提醒
-  if(S._lastBackupReminder === today) return;
-  const backups = await S._idb.getAll('backups');
-  const todayBackup = backups.find(b => (b.createdAt||'').startsWith(today));
-  if(!todayBackup) {
-    S._lastBackupReminder = today;
-    try { if(window.UI) {
-      setTimeout(()=>{
-        UI.confirm('💾 今日尚未备份','建议执行一次完整备份以确保数据安全。', {confirmText:'立即备份'}).then(ok=>{
-          if(ok) S.downloadBackup();
-        });
-      }, 2000);
-    }} catch(_){}
-  }
+  // 备份提醒已关闭（数据已云端同步，无需提醒）
 };
 
 // 高频修改检测（CRUD 调用后触发）
