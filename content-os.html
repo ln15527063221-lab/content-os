@@ -703,17 +703,28 @@ S.load = async () => {
     }
     console.log('☁️  [LOAD] ===== 完成: ' + total + ' 条 ===== ('+
       Object.entries(results).map(([k,v])=>k+':'+v.length).join(', ')+')');
+
+    // --- snake_case → camelCase 反向映射（Supabase 返回 → 前端字段名） ---
+    const _SNAKE_TO_CAMEL = {};
+    for(const [k,v] of Object.entries(_CAMEL_TO_SNAKE)) _SNAKE_TO_CAMEL[v] = k;
+    const _toCamel = (row) => {
+      const out = {};
+      for(const k of Object.keys(row)) { out[_SNAKE_TO_CAMEL[k]||k] = row[k]; }
+      return out;
+    };
+
     S.db = {
       version: C.VERSION, lastModified: H.nowISO(),
-      inspirations: results.inspirations,
-      topics: results.topics,
-      contents: results.contents,
-      users: results.users,
-      knowledge: results.knowledge,
-      competitors: results.competitors,
-      templates: results.templates,
+      inspirations: (results.inspirations||[]).map(_toCamel),
+      topics: (results.topics||[]).map(_toCamel),
+      contents: (results.contents||[]).map(_toCamel),
+      users: [],
+      knowledge: [],
+      competitors: [],
+      templates: [],
       config: {}
     };
+    console.log('☁️  [LOAD] 映射后 topics[0]', S.db.topics[0]||null);
     // 加载 config
     try {
       const { data: cfgRows } = await SUPABASE.from('config').select('*');
