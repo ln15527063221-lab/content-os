@@ -886,6 +886,25 @@ window.__lsdiag = () => {
 
 // ========== 通用 CRUD 工厂 ==========
 
+// --- schema-v2 白名单：只允许这些字段写入 Supabase ---
+const _COLUMNS = {
+  inspirations: ['id','title','raw_title','source','platform','heatLevel','heat_value','mention_count','trend','keywords','summary','contentDirection','hookStructure','source_url','sourceLink','platform_post_ids','rank','dataSourceType','publishedAt','fetchedAt','status','tags','notes','content','createdAt','updatedAt','created_at'],
+  topics:       ['id','title','raw_title','source','platform','heatLevel','heat_value','mention_count','trend','keywords','summary','contentDirection','hookStructure','theme','format','hook','goal','status','priority','workload','rating','tags','notes','description','estimatedDate','publishedDate','publishDate','source_url','sourceLink','platform_post_ids','dataSourceType','fetchedAt','parsedMetrics','coverImage','convertedTopicId','createdAt','updatedAt','created_at'],
+  contents:     ['id','topicId','topic_id','title','body','bodyText','coverImage','platform','publishDate','publishTime','contentLink','publishScreenshot','theme','format','hook','goal','tags','productionCostMinutes','rating','status','metrics','notes','source_url','platform_post_ids','rank','createdAt','updatedAt','created_at'],
+  users:        ['id','nickname','name','date','joinDate','leaveDate','status','source','device','acquisitionCost','remark','tags','metrics','createdAt','updatedAt'],
+  knowledge:    ['id','title','category','content','source','tags','rating','notes','createdAt','updatedAt'],
+  competitors:  ['id','title','name','platform','url','notes','tags','createdAt','updatedAt'],
+  templates:    ['id','title','content','category','tags','createdAt','updatedAt'],
+};
+
+const _filter = (tbl, obj) => {
+  const cols = _COLUMNS[tbl];
+  if(!cols) return obj; // 未知表不拦截
+  const out = {};
+  for(const k of cols) { if(k in obj) out[k] = obj[k]; }
+  return out;
+};
+
 S._crud = (collection) => {
   const tbl = collection;
   return {
@@ -895,7 +914,7 @@ S._crud = (collection) => {
       const before = S.db[collection].length;
       // ⚠️ 先写 Supabase，成功后再写内存
       try {
-        const { error } = await SUPABASE.from(tbl).insert(item);
+        const { error } = await SUPABASE.from(tbl).insert(_filter(tbl, item));
         if(error) { console.error('❌ [SUPABASE] insert ' + tbl + ': ' + error.message + ' | ' + JSON.stringify(error)); alert('保存失败：' + error.message); return item; }
       } catch(e) { console.error('❌ [SUPABASE] insert ' + tbl + ':', e.message); alert('网络异常，数据可能未保存'); return item; }
       S.db[collection].push(item);
@@ -906,7 +925,7 @@ S._crud = (collection) => {
       const idx=S.db[collection].findIndex(x=>x.id===id);
       if(idx===-1) { console.warn('🔍 [CRUD] '+collection+'.update('+id+') 未找到'); return null; }
       try {
-        const { error } = await SUPABASE.from(tbl).update(patch).eq('id', id);
+        const { error } = await SUPABASE.from(tbl).update(_filter(tbl, patch)).eq('id', id);
         if(error) { console.error('❌ [SUPABASE] update ' + tbl + ': ' + error.message); return null; }
       } catch(e) { console.error('❌ [SUPABASE] update ' + tbl + ':', e.message); return null; }
       Object.assign(S.db[collection][idx], patch, {updatedAt:H.nowISO()});
@@ -980,8 +999,7 @@ S.publishTopic = (topicId, publishData) => {
     sourcePlatform: topic.sourcePlatform||'manual',
     sourceUrl: topic.sourceUrl||'',
     createdAt: H.nowISO(),
-    updatedAt: H.nowISO(),
-    _ext: {}
+    updatedAt: H.nowISO()
   };
   S.contents.add(content);
   S.topics.update(topicId, { status:'published' });
@@ -1013,8 +1031,7 @@ S.inspirationToTopic = (inspId) => {
     notes: insp.source ? '来源：'+insp.source : '',
     sourceInspirationId: inspId,
     createdAt: H.nowISO(),
-    updatedAt: H.nowISO(),
-    _ext: {}
+    updatedAt: H.nowISO()
   };
   S.topics.add(topic);
   S.inspirations.update(inspId, { status:'converted', convertedTopicId:topicId });
@@ -2105,8 +2122,7 @@ P._openTopicModal = async (topicId, themes, formats, hooks, goals) => {
       status: data.status||'todo',
       notes: data.notes||'',
       createdAt: H.nowISO(),
-      updatedAt: H.nowISO(),
-      _ext: {}
+      updatedAt: H.nowISO()
     });
     UI.toast('选题已创建');
   }
@@ -2295,8 +2311,7 @@ P._openInspModal = async (inspId) => {
       status: 'active',
       convertedTopicId: null,
       createdAt: H.nowISO(),
-      updatedAt: H.nowISO(),
-      _ext: {}
+      updatedAt: H.nowISO()
     });
     UI.toast('灵感已记录');
   }
