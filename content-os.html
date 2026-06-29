@@ -687,59 +687,49 @@ S.db = null;
 
 // ============ 主加载流程（Supabase 为唯一数据源） ============
 S.load = async () => {
-  console.log('☁️  [LOAD] ===== 开始从 Supabase 加载数据 =====');
-  const tables = ['inspirations','topics','contents','users','knowledge','competitors','templates'];
-  try {
-    const results = {};
-    let total = 0;
-    for(const tbl of tables) {
-      try {
-        const { data, error } = await SUPABASE.from(tbl).select('*');
-        console.log('☁️  [LOAD] ' + tbl + ': ' + (error ? '❌ ' + error.message : '✅ ' + (data ? data.length : 0) + ' 条'), data ? data.slice(0, 1) : null);
-        if(error) { results[tbl]=[]; continue; }
-        results[tbl] = data || [];
-        total += results[tbl].length;
-      } catch(e) { console.error('❌ [LOAD] ' + tbl + ': ' + e.message); results[tbl]=[]; }
-    }
-    console.log('☁️  [LOAD] ===== 完成: ' + total + ' 条 ===== ('+
-      Object.entries(results).map(([k,v])=>k+':'+v.length).join(', ')+')');
+  console.log('☁️  [LOAD] ===== 开始从 Supabase 加载 =====');
+  const results = {};
+  let total = 0;
 
-    // --- snake_case → camelCase 反向映射（Supabase 返回 → 前端字段名） ---
-    const _SNAKE_TO_CAMEL = {};
-    for(const [k,v] of Object.entries(_CAMEL_TO_SNAKE)) _SNAKE_TO_CAMEL[v] = k;
-    const _toCamel = (row) => {
-      const out = {};
-      for(const k of Object.keys(row)) { out[_SNAKE_TO_CAMEL[k]||k] = row[k]; }
-      return out;
-    };
-
-    S.db = {
-      version: C.VERSION, lastModified: H.nowISO(),
-      inspirations: (results.inspirations||[]).map(_toCamel),
-      topics: (results.topics||[]).map(_toCamel),
-      contents: (results.contents||[]).map(_toCamel),
-      users: [],
-      knowledge: [],
-      competitors: [],
-      templates: [],
-      config: {}
-    };
-    console.log('☁️  [LOAD] 映射后 topics[0]', S.db.topics[0]||null);
-    // 加载 config
+  for(const tbl of ['topics','contents','inspirations']) {
     try {
-      const { data: cfgRows } = await SUPABASE.from('config').select('*');
-      if(cfgRows) cfgRows.forEach(c => { S.db.config[c.key] = c.value; });
-    } catch(_) {}
-    // 补齐 config 缺失 key
-    const defCfg = S.emptyDB().config;
-    for(const ck of Object.keys(defCfg)) { if(!(ck in S.db.config)) S.db.config[ck] = defCfg[ck]; }
-    return true;
-  } catch(e) {
-    console.error('❌ [LOAD] 严重失败:', e.message, e);
-    alert('数据加载失败：' + e.message + '\n请刷新页面重试');
-    S.db = S.emptyDB();
-    return false;
+      const { data, error } = await SUPABASE.from(tbl).select('*');
+      if(error) { console.error('❌ [LOAD] ' + tbl + ': ' + error.message); results[tbl]=[]; continue; }
+      results[tbl] = data || [];
+      total += results[tbl].length;
+      console.log('☁️  [LOAD RAW] ' + tbl, data ? (data.length + ' 条, 首条:') : '0', data?.[0]||null);
+    } catch(e) { console.error('❌ [LOAD] ' + tbl + ': ' + e.message); results[tbl]=[]; }
   }
+
+  // 反向映射 snake_case → camelCase
+  const _SNAKE_TO_CAMEL = {};
+  for(const [k,v] of Object.entries(_CAMEL_TO_SNAKE)) _SNAKE_TO_CAMEL[v] = k;
+  const _toCamel = (row) => {
+    const out = {};
+    for(const k of Object.keys(row)) { out[_SNAKE_TO_CAMEL[k]||k] = row[k]; }
+    return out;
+  };
+
+  S.db = {
+    version: C.VERSION, lastModified: H.nowISO(),
+    topics: (results.topics||[]).map(_toCamel),
+    contents: (results.contents||[]).map(_toCamel),
+    inspirations: (results.inspirations||[]).map(_toCamel),
+    users: [], knowledge: [], competitors: [], templates: [],
+    config: {}
+  };
+  console.log('☁️  [LOAD DB] S.db.topics', S.db.topics);
+  console.log('☁️  [LOAD DB] S.db.contents', S.db.contents);
+  console.log('☁️  [LOAD] ===== 完成: ' + total + ' 条 =====');
+
+  // 加载 config
+  try {
+    const { data: cfgRows } = await SUPABASE.from('config').select('*');
+    if(cfgRows) cfgRows.forEach(c => { S.db.config[c.key] = c.value; });
+  } catch(_) {}
+  const defCfg = S.emptyDB().config;
+  for(const ck of Object.keys(defCfg)) { if(!(ck in S.db.config)) S.db.config[ck] = defCfg[ck]; }
+  return true;
 };
 
 // --- 数据迁移 ---
@@ -932,15 +922,15 @@ const _toSnake = (key) => _CAMEL_TO_SNAKE[key] || key;
 
 const SANITIZE = {
   topics(obj) {
-    const allowed = ['id','title','status'];
+    const allowed = ['id','title','status','goal','priority','theme','format','hook','tags','notes','coreContent','plannedDate','estimatedWorkload','sourcePlatform','sourceUrl','sourceInspirationId','convertedTopicId','parsedMetrics','coverImage','publishDate','publishedDate','description','rating','workload','createdAt','updatedAt'];
     return this._clean('topics', allowed, obj);
   },
   contents(obj) {
-    const allowed = ['id','topic_id','title','body'];
+    const allowed = ['id','topicId','title','body','bodyText','platform','publishDate','publishTime','contentLink','publishScreenshot','theme','format','hook','goal','tags','productionCostMinutes','rating','status','metrics','notes','coverImage','createdAt','updatedAt'];
     return this._clean('contents', allowed, obj);
   },
   inspirations(obj) {
-    const allowed = ['id','content','source'];
+    const allowed = ['id','title','content','source','platform','heatLevel','keywords','summary','status','tags','notes','sourceUrl','sourceLink','publishedAt','convertedTopicId','createdAt','updatedAt'];
     return this._clean('inspirations', allowed, obj);
   },
   users(obj) {
