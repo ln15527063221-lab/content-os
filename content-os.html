@@ -688,30 +688,38 @@ S.db = null;
 // ============ 主加载流程（Supabase 为唯一数据源） ============
 S.load = async () => {
   console.log('☁️  [LOAD] ===== 开始从 Supabase 加载 =====');
+  console.log('🔍 [S.DB BEFORE] 加载前 S.db 状态:', (S.db ? Object.keys(S.db) : 'null'));
+
   const results = {};
   let total = 0;
 
   for(const tbl of ['topics','contents','inspirations']) {
     try {
       const { data, error } = await SUPABASE.from(tbl).select('*');
+      console.log('🔍 [SUPABASE RAW] ' + tbl + ' → error=' + (error ? error.message : 'null') + ', data=' + (data ? data.length + '条' : 'null'), data||[]);
       if(error) { console.error('❌ [LOAD] ' + tbl + ': ' + error.message); results[tbl]=[]; continue; }
       results[tbl] = data || [];
       total += results[tbl].length;
-      console.log('☁️  [LOAD RAW] ' + tbl, data ? (data.length + ' 条, 首条:') : '0', data?.[0]||null);
     } catch(e) { console.error('❌ [LOAD] ' + tbl + ': ' + e.message); results[tbl]=[]; }
   }
 
-  // 反向映射 snake_case → camelCase（复用 _toCamel2）
+  // 反向映射 snake_case → camelCase
+  const mapped_topics = (results.topics||[]).map(_toCamel2);
+  const mapped_contents = (results.contents||[]).map(_toCamel2);
+  const mapped_inspirations = (results.inspirations||[]).map(_toCamel2);
+  console.log('🔍 [MAPPED DATA] topics:', mapped_topics.length + '条', mapped_topics[0]||null);
+  console.log('🔍 [MAPPED DATA] contents:', mapped_contents.length + '条', mapped_contents[0]||null);
+
   S.db = {
     version: C.VERSION, lastModified: H.nowISO(),
-    topics: (results.topics||[]).map(_toCamel2),
-    contents: (results.contents||[]).map(_toCamel2),
-    inspirations: (results.inspirations||[]).map(_toCamel2),
+    topics: mapped_topics,
+    contents: mapped_contents,
+    inspirations: mapped_inspirations,
     users: [], knowledge: [], competitors: [], templates: [],
     config: {}
   };
-  console.log('☁️  [LOAD DB] S.db.topics', S.db.topics);
-  console.log('☁️  [LOAD DB] S.db.contents', S.db.contents);
+  console.log('🔍 [S.DB AFTER] S.db.topics:', S.db.topics.length + '条', S.db.topics);
+  console.log('🔍 [S.DB AFTER] S.db.contents:', S.db.contents.length + '条', S.db.contents);
   console.log('☁️  [LOAD] ===== 完成: ' + total + ' 条 =====');
 
   // 加载 config
@@ -922,16 +930,17 @@ const _toCamel2 = (row) => {
 };
 
 const SANITIZE = {
+  // 白名单全部 snake_case（与 Supabase 列名一致）
   topics(obj) {
-    const allowed = ['id','title','status','goal','priority','theme','format','hook','tags','notes','coreContent','plannedDate','estimatedWorkload','sourcePlatform','sourceUrl','sourceInspirationId','convertedTopicId','parsedMetrics','coverImage','publishDate','publishedDate','description','rating','workload','createdAt','updatedAt'];
+    const allowed = ['id','title','status','goal','priority','theme','format','hook','tags','notes','core_content','planned_date','estimated_workload','source_platform','source_url','source_inspiration_id','converted_topic_id','parsed_metrics','cover_image','publish_date','published_date','description','rating','workload','created_at','updated_at'];
     return this._clean('topics', allowed, obj);
   },
   contents(obj) {
-    const allowed = ['id','topicId','title','body','bodyText','platform','publishDate','publishTime','contentLink','publishScreenshot','theme','format','hook','goal','tags','productionCostMinutes','rating','status','metrics','notes','coverImage','createdAt','updatedAt'];
+    const allowed = ['id','topic_id','title','body','body_text','platform','publish_date','publish_time','content_link','publish_screenshot','theme','format','hook','goal','tags','production_cost_minutes','rating','status','metrics','notes','cover_image','created_at','updated_at'];
     return this._clean('contents', allowed, obj);
   },
   inspirations(obj) {
-    const allowed = ['id','title','content','source','platform','heatLevel','keywords','summary','status','tags','notes','sourceUrl','sourceLink','publishedAt','convertedTopicId','createdAt','updatedAt'];
+    const allowed = ['id','title','content','source','platform','heat_level','keywords','summary','status','tags','notes','source_url','source_link','published_at','converted_topic_id','created_at','updated_at'];
     return this._clean('inspirations', allowed, obj);
   },
   users(obj) {
@@ -950,7 +959,7 @@ const SANITIZE = {
     const allowed = ['id','title','content','tags'];
     return this._clean('templates', allowed, obj);
   },
-  // 内部清洗引擎：映射 + 过滤
+  // 内部清洗引擎：camelCase 键 → snake_case 值，白名单过滤
   _clean(table, allowed, obj) {
     const safe = {};
     const dirty = [];
@@ -964,9 +973,12 @@ const SANITIZE = {
         dirty.push(k);
       }
     }
-    if(dirty.length) console.warn('🧹 [SANITIZE] ' + table + ' 过滤非法字段: ' + dirty.join(', '));
-    if(mapped.length) console.log('🔀 [SANITIZE] ' + table + ' 命名转换: ' + mapped.join(', '));
-    console.log('🧹 [SANITIZED] ' + table, safe);
+    // 强制校验：必须有 id
+    if(!safe.id && obj.id) safe.id = obj.id;
+    if(!safe.id) console.error('❌ [SANITIZE] ' + table + ' write 缺少 id，已阻止');
+    if(dirty.length) console.warn('🧹 [SANITIZE] ' + table + ' 过滤: ' + dirty.join(', '));
+    if(mapped.length) console.log('🔀 [SANITIZE] ' + table + ' 映射: ' + mapped.join(', '));
+    console.log('🧹 [SANITIZE OUTPUT] ' + table, safe);
     return safe;
   }
 };
