@@ -929,69 +929,35 @@ const _toCamel2 = (row) => {
   return out;
 };
 
-const SANITIZE = {
-  topics(obj) {
-    const allowed = [
-      'id','title','status','created_at','updated_at',
-      'platform','theme','format','hook','goal','priority','tags',
-      'planned_date','estimated_workload','notes','core_content',
-      'source_inspiration_id','source_platform','source_url','cover_image'
-    ];
-    return this._clean('topics', allowed, obj);
-  },
-  contents(obj) {
-    const allowed = [
-      'id','title','body','created_at','updated_at',
-      'platform','theme','format','hook','goal','tags','rating',
-      'publish_date','publish_time','content_link','body_text',
-      'cover_image','production_cost_minutes','topic_id',
-      'source_platform','source_url','metrics','review'
-    ];
-    return this._clean('contents', allowed, obj);
-  },
-  inspirations(obj) {
-    const allowed = [
-      'id','title','content','created_at','updated_at',
-      'status','tags','source','description','converted_topic_id'
-    ];
-    return this._clean('inspirations', allowed, obj);
-  },
-  users(obj) {
-    const allowed = ['id','nickname','name','status','remark','tags'];
-    return this._clean('users', allowed, obj);
-  },
-  knowledge(obj) {
-    const allowed = ['id','title','content','tags'];
-    return this._clean('knowledge', allowed, obj);
-  },
-  competitors(obj) {
-    const allowed = ['id','title','name','platform','url','notes','tags'];
-    return this._clean('competitors', allowed, obj);
-  },
-  templates(obj) {
-    const allowed = ['id','title','content','tags'];
-    return this._clean('templates', allowed, obj);
-  },
-  _clean(table, allowed, obj) {
-    const safe = {};
-    const dirty = [];
-    const mapped = [];
-    for(const k of Object.keys(obj)) {
-      const snk = _toSnake(k);
-      if(allowed.includes(snk)) {
-        if(snk !== k) mapped.push(k + '→' + snk);
-        safe[snk] = obj[k];
-      } else {
-        dirty.push(k);
-      }
+const _clean = (table, allowed, obj) => {
+  const safe = {};
+  const dirty = [];
+  const mapped = [];
+  for(const k of Object.keys(obj)) {
+    const snk = _toSnake(k);
+    if(allowed.includes(snk)) {
+      if(snk !== k) mapped.push(k + '→' + snk);
+      safe[snk] = obj[k];
+    } else {
+      dirty.push(k);
     }
-    if(!safe.id && obj.id) safe.id = obj.id;
-    if(!safe.id) console.error('❌ [SANITIZE] ' + table + ' write 缺少 id，已阻止');
-    if(dirty.length) console.warn('🧹 [SANITIZE] ' + table + ' 过滤: ' + dirty.join(', '));
-    if(mapped.length) console.log('🔀 [SANITIZE] ' + table + ' 映射: ' + mapped.join(', '));
-    console.log('🧹 [SANITIZE OUTPUT] ' + table, safe);
-    return safe;
   }
+  if(!safe.id && obj.id) safe.id = obj.id;
+  if(!safe.id) console.error('❌ [SANITIZE] ' + table + ' write 缺少 id，已阻止');
+  if(dirty.length) console.warn('🧹 [SANITIZE] ' + table + ' 过滤: ' + dirty.join(', '));
+  if(mapped.length) console.log('🔀 [SANITIZE] ' + table + ' 映射: ' + mapped.join(', '));
+  console.log('🧹 [SANITIZE OUTPUT] ' + table, safe);
+  return safe;
+};
+
+const SANITIZE = {
+  topics:       (obj) => _clean('topics',      ['id','title','status','created_at','updated_at','platform','theme','format','hook','goal','priority','tags','planned_date','estimated_workload','notes','core_content','source_inspiration_id','source_platform','source_url','cover_image'], obj),
+  contents:     (obj) => _clean('contents',    ['id','title','body','created_at','updated_at','platform','theme','format','hook','goal','tags','rating','publish_date','publish_time','content_link','body_text','cover_image','production_cost_minutes','topic_id','source_platform','source_url','metrics','review'], obj),
+  inspirations: (obj) => _clean('inspirations',['id','title','content','created_at','updated_at','status','tags','source','description','converted_topic_id'], obj),
+  users:        (obj) => _clean('users',       ['id','nickname','name','status','remark','tags'], obj),
+  knowledge:    (obj) => _clean('knowledge',   ['id','title','content','tags'], obj),
+  competitors:  (obj) => _clean('competitors', ['id','title','name','platform','url','notes','tags'], obj),
+  templates:    (obj) => _clean('templates',   ['id','title','content','tags'], obj),
 };
 
 S._crud = (collection) => {
