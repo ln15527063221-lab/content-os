@@ -930,17 +930,17 @@ const _toCamel2 = (row) => {
 };
 
 const SANITIZE = {
-  // 白名单全部 snake_case（与 Supabase 列名一致）
+  // 白名单与 Supabase 实际列严格一致（运行时探测结果）
   topics(obj) {
-    const allowed = ['id','title','status','goal','priority','theme','format','hook','tags','notes','core_content','planned_date','estimated_workload','source_platform','source_url','source_inspiration_id','converted_topic_id','parsed_metrics','cover_image','publish_date','published_date','description','rating','workload','created_at','updated_at'];
+    const allowed = ['id','title','status','created_at'];
     return this._clean('topics', allowed, obj);
   },
   contents(obj) {
-    const allowed = ['id','topic_id','title','body','body_text','platform','publish_date','publish_time','content_link','publish_screenshot','theme','format','hook','goal','tags','production_cost_minutes','rating','status','metrics','notes','cover_image','created_at','updated_at'];
+    const allowed = ['id','title','body','created_at'];
     return this._clean('contents', allowed, obj);
   },
   inspirations(obj) {
-    const allowed = ['id','title','content','source','platform','heat_level','keywords','summary','status','tags','notes','source_url','source_link','published_at','converted_topic_id','created_at','updated_at'];
+    const allowed = ['id','title','content','created_at'];
     return this._clean('inspirations', allowed, obj);
   },
   users(obj) {
@@ -2189,26 +2189,41 @@ P._openTopicModal = async (topicId, themes, formats, hooks, goals) => {
   // 在modal打开后、关闭前绑定save按钮
   setTimeout(()=>{
     const saveBtn = document.getElementById('topic-save-btn');
-    if(saveBtn) saveBtn.onclick = () => {
-      const form = document.getElementById('topic-form');
-      if(!form) return;
-      const data = UI.readForm(form);
-      if(!data.title.trim()) { UI.toast('标题不能为空','error'); return; }
-      UI.closeModal(data);
-    };
+    if(saveBtn) {
+      console.log('🔍 [EVENT BIND] topic-save-btn 已绑定');
+      saveBtn.onclick = () => {
+        console.log('🔍 [SAVE CLICKED]');
+        try {
+          const form = document.getElementById('topic-form');
+          if(!form) { console.log('🔍 [SAVE HALT] form 未找到'); return; }
+          const data = UI.readForm(form);
+          console.log('🔍 [SAVE FORM DATA]', data);
+          if(!data.title.trim()) { console.log('🔍 [SAVE HALT] title 为空'); UI.toast('标题不能为空','error'); return; }
+          console.log('🔍 [SAVE CLOSE MODAL]');
+          UI.closeModal(data);
+        } catch(e) {
+          console.error('❌ [SAVE ERROR]', e.message, e);
+        }
+      };
+    } else {
+      console.error('❌ [EVENT BIND] topic-save-btn 不存在');
+    }
   }, 50);
   const result = await modalPromise;
-  if(!result||result==='cancel') return; // result 是表单数据
+  console.log('🔍 [SAVE RESULT]', typeof result, result);
+  if(!result||result==='cancel') { console.log('🔍 [SAVE HALT] result=' + (result||'null') + ', 已取消'); return; }
 
   const data = result;
   const tags = (data.tags_str||'').split(',').map(s=>s.trim()).filter(Boolean);
   delete data.tags_str;
 
+  console.log('🔍 [SAVE START] isEdit=' + isEdit + ' title=' + data.title);
   if(isEdit) {
+    console.log('🔍 [BEFORE UPDATE]', { topicId, ...data, tags });
     await S.topics.update(topicId, {...data, tags});
     UI.toast('选题已更新');
   } else {
-    await S.topics.add({
+    const newItem = {
       id: H.uid('top_'),
       title: data.title,
       coreContent: data.coreContent||'',
@@ -2224,9 +2239,20 @@ P._openTopicModal = async (topicId, themes, formats, hooks, goals) => {
       notes: data.notes||'',
       createdAt: H.nowISO(),
       updatedAt: H.nowISO()
-    });
-    UI.toast('选题已创建');
+    };
+    console.log('🔍 [BEFORE INSERT]', newItem);
+    try {
+      const inserted = await S.topics.add(newItem);
+      console.log('🔍 [AFTER INSERT]', inserted);
+      if(!inserted) { UI.toast('保存失败，请查看 Console','error'); return; }
+      UI.toast('选题已创建');
+    } catch(e) {
+      console.error('❌ [SAVE INSERT ERROR]', e.message, e);
+      UI.toast('保存异常: ' + e.message, 'error');
+      return;
+    }
   }
+  console.log('🔍 [SAVE DONE] 即将渲染');
   P.renderTopics();
 };
 
