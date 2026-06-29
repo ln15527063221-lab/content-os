@@ -992,24 +992,43 @@ S._crud = (collection) => {
     add:   async (item) => {
       const before = S.db[collection].length;
       const clean = sanitize(item);
+      console.log('🔍 [INSERT INPUT] ' + tbl, item);
+      console.log('🔍 [INSERT CLEAN] ' + tbl, clean);
       try {
-        const { data: returned, error } = await SUPABASE.from(tbl).insert(clean).select();
-        if(error) { console.error('❌ [SUPABASE] insert ' + tbl + ': ' + error.message + ' | ' + JSON.stringify(error)); alert('保存失败：' + error.message); return item; }
-        // Supabase 有 data 返回时优先使用（确保 snake_case→camelCase 一致性）
-        const final = (returned && returned[0]) ? _toCamel2(returned[0]) : item;
+        const res = await SUPABASE.from(tbl).insert(clean).select();
+        console.log('🔍 [INSERT RESULT] ' + tbl, res);
+        const { data: returned, error } = res;
+        if(error) {
+          console.error('❌ [INSERT ERROR] ' + tbl + ': ' + error.message + ' | ' + JSON.stringify(error));
+          alert('保存失败：' + error.message);
+          return null;
+        }
+        if(!returned || returned.length === 0) {
+          console.error('❌ [INSERT EMPTY] ' + tbl + ': 返回 data=[] 但无 error');
+          alert('保存失败：服务端未返回数据');
+          return null;
+        }
+        console.log('🔍 [INSERT DATA] ' + tbl + ': ' + returned.length + ' 条', returned);
+        const final = _toCamel2(returned[0]);
         S.db[collection].push(final);
         console.log('✅ [CRUD] '+collection+'.add("'+(item.title||item.content||item.id)+'"): '+before+'→'+S.db[collection].length);
         return final;
-      } catch(e) { console.error('❌ [SUPABASE] insert ' + tbl + ':', e.message); alert('网络异常，数据可能未保存'); return item; }
+      } catch(e) {
+        console.error('❌ [INSERT EXCEPTION] ' + tbl + ':', e.message);
+        alert('网络异常：' + e.message);
+        return null;
+      }
     },
     update: async (id, patch) => {
       const idx=S.db[collection].findIndex(x=>x.id===id);
       if(idx===-1) { console.warn('🔍 [CRUD] '+collection+'.update('+id+') 未找到'); return null; }
       const clean = sanitize(patch);
+      console.log('🔍 [UPDATE CLEAN] ' + tbl, clean);
       try {
-        const { error } = await SUPABASE.from(tbl).update(clean).eq('id', id);
-        if(error) { console.error('❌ [SUPABASE] update ' + tbl + ': ' + error.message); return null; }
-      } catch(e) { console.error('❌ [SUPABASE] update ' + tbl + ':', e.message); return null; }
+        const res = await SUPABASE.from(tbl).update(clean).eq('id', id).select();
+        console.log('🔍 [UPDATE RESULT] ' + tbl, res);
+        if(res.error) { console.error('❌ [UPDATE ERROR] ' + tbl + ': ' + res.error.message); return null; }
+      } catch(e) { console.error('❌ [UPDATE EXCEPTION] ' + tbl + ':', e.message); return null; }
       Object.assign(S.db[collection][idx], patch, {updatedAt:H.nowISO()});
       return S.db[collection][idx];
     },
