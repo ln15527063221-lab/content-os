@@ -100,7 +100,17 @@
 <!-- Tailwind CDN 必须在 XLSX 之前加载，XLSX 用 defer 避免阻塞渲染 -->
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
+// ========== Supabase 客户端 ==========
+const SUPABASE = supabase.createClient(
+  'https://dcuwayvfawdcfqudfiku.supabase.co',
+  'sb_publishable_HCimv1v-aZTc6SMbYeeztA_-JtzI8ad'
+);
+console.log('⚡ Supabase 已连接');
+
+
+
 tailwind.config = {
   theme: {
     extend: {
@@ -122,6 +132,8 @@ tailwind.config = {
 </head>
 <body class="bg-gray-50 text-gray-800 antialiased">
 
+
+
 <!-- ====== App Container ====== -->
 <div id="app" class="flex min-h-screen">
 
@@ -134,8 +146,8 @@ tailwind.config = {
     <nav class="flex-1 overflow-y-auto py-3 px-3 space-y-0.5" id="sidebar-nav">
       <!-- JS渲染 -->
     </nav>
-    <div class="px-5 py-3 border-t border-gray-800 text-xs text-gray-600">
-      <span id="storage-indicator">数据：加载中...</span>
+    <div class="px-5 py-3 border-t border-gray-800">
+      <span id="storage-indicator" class="text-xs text-gray-500">☁️ 加载中...</span>
     </div>
   </aside>
 
@@ -440,22 +452,12 @@ S.emptyDB = () => ({
   inspirations: [],
   topics: [],
   contents: [],
-  users: [],
-  knowledge: [],
-  competitors: [],
-  templates: [],
-  trends: [],
   config: {
     themes: [...C.DEFAULT_THEMES],
     formats: [...C.DEFAULT_FORMATS],
     hooks: [...C.DEFAULT_HOOKS],
     goals: [...C.DEFAULT_GOALS],
     platforms: [...C.DEFAULT_PLATFORMS],
-    priorities: [...C.PRIORITIES],
-    workloads: [...C.WORKLOADS],
-    ratings: [...C.RATINGS],
-    recordDays: [0,1,3,7,30],
-    knowledgeCategories: [...C.KNOWLEDGE_CATEGORIES]
   }
 });
 
@@ -584,7 +586,6 @@ S._doBackup = async (trigger) => {
         knowledge: S.db.knowledge||[],
         competitors: S.db.competitors||[],
         templates: S.db.templates||[],
-        trends: S.db.trends||[],
         config: S.db.config||{}
       }
     };
@@ -610,7 +611,6 @@ S.downloadBackup = async () => {
     knowledge: db.knowledge||[],
     competitors: db.competitors||[],
     templates: db.templates||[],
-    trends: db.trends||[],
     config: db.config||{},
     _backups: backups
   };
@@ -680,118 +680,46 @@ S.checkDailyReminder = async () => {
 };
 
 // 高频修改检测（CRUD 调用后触发）
-S._checkBurst = () => {
-  S._modifyBurstCount++;
-  if(S._modifyBurstTimer) clearTimeout(S._modifyBurstTimer);
-  S._modifyBurstTimer = setTimeout(()=>{
-    if(S._modifyBurstCount >= 5 && Date.now() - S._lastBurstWarning > 600000) {
-      S._lastBurstWarning = Date.now();
-      try { if(window.UI) UI.toast('⚡ 系统正在频繁变更，建议保存备份版本', 'info'); } catch(_){}
-    }
-    S._modifyBurstCount = 0;
-  }, 10000);
-};
+S._checkBurst = () => { /* no-op */ };
 
 // --- 当前数据 ---
 S.db = null;
 
-// --- 加载 ---
+// ============ 主加载流程（Supabase 为唯一数据源） ============
 S.load = async () => {
-  console.log('🔒 [SAFELOAD] 开始加载数据...');
+  console.log('☁️  [SAFELOAD] 从 Supabase 加载数据...');
+  const tables = ['inspirations','topics','contents'];
   try {
-    await S._idb.open();
-
-    // 1) 尝试从 IDB 读取所有 store
-    const idbData = {};
-    for(const name of ['inspirations','topics','contents','users','knowledge','competitors']) {
-      try { idbData[name] = await S._idb.getAll(name); }
-      catch(_) { idbData[name] = []; } // store 不存在时容错
-    }
-    // 兼容 v1: 从旧 experiments store 合并数据
-    try {
-      const oldExps = await S._idb.getAll('experiments');
-      if(oldExps.length > 0) {
-        console.log('🔄 [SAFELOAD] 从旧 experiments store 发现 ' + oldExps.length + ' 条数据，合并到 users');
-        idbData.users = [...idbData.users, ...oldExps];
-      }
-    } catch(_) { /* experiments store 不存在，正常 */ }
-
-    const totalIDB = Object.values(idbData).reduce((s,arr)=>s+arr.length, 0);
-    console.log('🔒 [SAFELOAD] IDB 数据量: insp='+idbData.inspirations.length+' topic='+idbData.topics.length+' content='+idbData.contents.length+' users='+idbData.users.length+' 合计='+totalIDB);
-
-    if(totalIDB > 0) {
-      // ⚠️ 关键：不调用 S.emptyDB()，而是基于现有 IDB 数据构建 S.db
-      S.db = {
-        version: C.VERSION,
-        lastModified: H.nowISO(),
-        inspirations: idbData.inspirations,
-        topics: idbData.topics,
-        contents: idbData.contents,
-        users: idbData.users,
-        knowledge: idbData.knowledge,
-        competitors: idbData.competitors,
-        templates: [],
-        trends: idbData.trends||[],
-        config: {}
-      };
-      // 读取 config
-      try { const cfg = await S._idb.getAll('config'); cfg.forEach(c=>{ S.db.config[c.key]=c.value; }); } catch(_){}
-      // 补齐 config 缺失 key
-      const defCfg = S.emptyDB().config;
-      for(const ck of Object.keys(defCfg)) { if(!(ck in S.db.config)) S.db.config[ck] = defCfg[ck]; }
-
-      console.log('✅ [SAFELOAD] 从 IndexedDB 加载成功，数据已恢复: content='+S.db.contents.length+' topic='+S.db.topics.length+' insp='+S.db.inspirations.length+' users='+S.db.users.length);
-      S._migrate();
-      S._imageCache = {};
-      try { const imgs = await S._idb.getAll('images'); imgs.forEach(img=>{ S._imageCache[img.id]=img.data; }); } catch(_){}
-      return true;
-    }
-
-    // 2) IDB 为空 → 尝试从 localStorage 恢复（最后的救命稻草）
-    const legacyKeys = ['content_os_v2', 'content_os', 'content_os_v1'];
-    let legacyFound = false;
-    for(const key of legacyKeys) {
-      const raw = localStorage.getItem(key);
-      if(!raw) continue;
+    const results = {};
+    let total = 0;
+    for(const tbl of tables) {
       try {
-        const legacy = JSON.parse(raw);
-        if(legacy && (legacy.contents || legacy.topics || legacy.inspirations)) {
-          console.log('🔒 [SAFELOAD] 在 localStorage key "'+key+'" 发现旧数据: content='+(legacy.contents?.length||0)+' topic='+(legacy.topics?.length||0)+' insp='+(legacy.inspirations?.length||0));
-          // 保留 experiments 数据（如果存在）
-          if(legacy.experiments && legacy.experiments.length > 0) {
-            legacy.users = legacy.users || [];
-            legacy.users = [...legacy.users, ...legacy.experiments];
-            console.log('🔄 [SAFELOAD] 合并旧 experiments 数据到 users: ' + legacy.experiments.length + ' 条');
-          }
-          S.db = legacy;
-          S._migrate();
-          // 迁移到 IDB
-          try {
-            await S._doSave();
-            console.log('✅ [SAFELOAD] 从 localStorage 迁移到 IndexedDB 成功');
-            // ⚠️ 只有迁移成功后才删除 localStorage key
-            localStorage.removeItem(key);
-            console.log('🗑️ [SAFELOAD] 已删除旧 localStorage key: ' + key);
-            try { if(window.UI) UI.toast('数据已升级到 IndexedDB，本地容量限制已解除', 'info'); } catch(_){}
-          } catch(saveErr) {
-            console.error('❌ [SAFELOAD] 迁移到 IDB 失败，保留 localStorage 备份！', saveErr);
-            try { if(window.UI) UI.toast('⚠️ 数据迁移失败，旧数据仍保留在浏览器中，请尝试导出备份', 'error'); } catch(_){}
-          }
-          legacyFound = true;
-          break;
-        }
-      } catch(e) { console.warn('localStorage 解析失败 key='+key, e); }
+        const { data, error } = await SUPABASE.from(tbl).select('*');
+        if(error) { console.warn('⚠ Supabase 读取 '+tbl+':', error.message); results[tbl]=[]; continue; }
+        results[tbl] = data || [];
+        total += results[tbl].length;
+      } catch(e) { console.warn('⚠ Supabase 读取 '+tbl+':', e.message); results[tbl]=[]; }
     }
-
-    if(legacyFound) return true;
-
-    // 3) 完全没有数据 → 初始化空 DB
-    console.log('🔒 [SAFELOAD] 未发现任何已有数据，初始化空数据库');
-    S.db = S.emptyDB();
-    await S._doSave();
+    console.log('☁️  [SAFELOAD] 加载完成: '+total+' 条 ('+
+      Object.entries(results).map(([k,v])=>k+':'+v.length).join(', ')+')');
+    S.db = {
+      version: C.VERSION, lastModified: H.nowISO(),
+      inspirations: results.inspirations,
+      topics: results.topics,
+      contents: results.contents,
+      config: {}
+    };
+    // 加载 config
+    try {
+      const { data: cfgRows } = await SUPABASE.from('config').select('*');
+      if(cfgRows) cfgRows.forEach(c => { S.db.config[c.key] = c.value; });
+    } catch(_) {}
+    // 补齐 config 缺失 key
+    const defCfg = S.emptyDB().config;
+    for(const ck of Object.keys(defCfg)) { if(!(ck in S.db.config)) S.db.config[ck] = defCfg[ck]; }
     return true;
   } catch(e) {
-    console.error('❌ [SAFELOAD] IndexedDB 加载失败', e);
+    console.error('❌ [SAFELOAD] 加载失败:', e.message);
     S.db = S.emptyDB();
     return false;
   }
@@ -880,20 +808,16 @@ S._doSave = async () => {
   S._lastSaveSize = await S._idb.getSize();
 };
 
-S.save = () => {
-  S._saveQueue = S._saveQueue.then(() => S._doSave()).catch(e => console.error('保存队列异常:', e));
-};
+S.save = () => { /* no-op: Supabase 已承载所有写入 */ };
 
 // --- 获取数据大小 ---
-S.getSize = () => S._lastSaveSize || 0;
+S.getSize = () => 0;
 
 // --- 更新存储指示器 ---
 S._updateIndicator = () => {
   const el = document.getElementById('storage-indicator');
   if(el) {
-    const sizeStr = H.fmtSize(S.getSize());
-    // Show IDB indicator
-    el.innerHTML = `<span class="text-xs ${S._saveOK ? 'text-gray-400' : 'text-red-500'}">💾 IDB ${sizeStr}${!S._saveOK?' ⚠':''}</span>`;
+    el.innerHTML = '<span class="text-xs text-gray-500">☁️ Supabase</span>';
   }
 };
 
@@ -956,46 +880,54 @@ window.__lsdiag = () => {
 
 // ========== 通用 CRUD 工厂 ==========
 
-S._crud = (collection) => ({
-  all:   () => S.db[collection],
-  get:   (id) => S.db[collection].find(x=>x.id===id)||null,
-  add:   (item) => {
-    const before = S.db[collection].length;
-    S.db[collection].push(item);
-    S.save();
-    S._doBackup(collection+'.add');
-    S._checkBurst();
-    console.log(`🔍 [CRUD] ${collection}.add("${item.title||item.name||item.id}"): ${before}→${S.db[collection].length}, saveOK=${S._saveOK}`);
-    return item;
-  },
-  update:(id, patch) => {
-    const idx=S.db[collection].findIndex(x=>x.id===id);
-    if(idx===-1) { console.warn(`🔍 [CRUD] ${collection}.update(${id}) 未找到`); return null; }
-    Object.assign(S.db[collection][idx], patch, {updatedAt:H.nowISO()});
-    S.save();
-    S._doBackup(collection+'.update');
-    S._checkBurst();
-    console.log(`🔍 [CRUD] ${collection}.update("${S.db[collection][idx].title||id}"): saveOK=${S._saveOK}`);
-    return S.db[collection][idx];
-  },
-  remove:(id) => {
-    const before = S.db[collection].length;
-    S.db[collection]=S.db[collection].filter(x=>x.id!==id);
-    S.save();
-    S._doBackup(collection+'.remove');
-    console.log(`🔍 [CRUD] ${collection}.remove(${id}): ${before}→${S.db[collection].length}, saveOK=${S._saveOK}`);
-  },
-});
+S._crud = (collection) => {
+  const tbl = collection;
+  return {
+    all:   () => S.db[collection],
+    get:   (id) => S.db[collection].find(x=>x.id===id)||null,
+    add:   async (item) => {
+      const before = S.db[collection].length;
+      S.db[collection].push(item);
+      try {
+        const { error } = await SUPABASE.from(tbl).insert(item);
+        if(error) console.warn('⚠ Supabase insert '+tbl+':', error.message);
+      } catch(e) { console.warn('⚠ Supabase insert '+tbl+':', e.message); }
+      console.log('🔍 [CRUD] '+collection+'.add("'+(item.title||item.content||item.id)+'"): '+before+'→'+S.db[collection].length);
+      return item;
+    },
+    update: async (id, patch) => {
+      const idx=S.db[collection].findIndex(x=>x.id===id);
+      if(idx===-1) { console.warn('🔍 [CRUD] '+collection+'.update('+id+') 未找到'); return null; }
+      Object.assign(S.db[collection][idx], patch, {updatedAt:H.nowISO()});
+      try {
+        const { error } = await SUPABASE.from(tbl).update(patch).eq('id', id);
+        if(error) console.warn('⚠ Supabase update '+tbl+':', error.message);
+      } catch(e) { console.warn('⚠ Supabase update '+tbl+':', e.message); }
+      return S.db[collection][idx];
+    },
+    remove: async (id) => {
+      const before = S.db[collection].length;
+      S.db[collection]=S.db[collection].filter(x=>x.id!==id);
+      try {
+        const { error } = await SUPABASE.from(tbl).delete().eq('id', id);
+        if(error) console.warn('⚠ Supabase delete '+tbl+':', error.message);
+      } catch(e) { console.warn('⚠ Supabase delete '+tbl+':', e.message); }
+      console.log('🔍 [CRUD] '+collection+'.remove('+id+'): '+before+'→'+S.db[collection].length);
+    },
+  };
+};
 
 // --- 各实体 CRUD ---
 S.inspirations = S._crud('inspirations');
 S.topics      = S._crud('topics');
 S.contents    = S._crud('contents');
-S.knowledge   = S._crud('knowledge');
-S.users       = S._crud('users');
-S.competitors = S._crud('competitors');
-S.templates   = S._crud('templates');
-S.trends      = S._crud('trends');
+
+// --- 其他模块存根（保持 UI 不崩溃，数据均为空） ---
+const _stub = () => ({ all:()=>[], get:()=>null, add:async()=>null, update:async()=>null, remove:async()=>{} });
+S.users       = _stub();
+S.knowledge   = _stub();
+S.competitors = _stub();
+S.templates   = _stub();
 
 // --- 配置 CRUD ---
 S.config = {
@@ -1004,11 +936,11 @@ S.config = {
   getHooks:     () => S.db.config.hooks,
   getGoals:     () => S.db.config.goals,
   getPlatforms: () => S.db.config.platforms,
-  setThemes:    (arr) => { S.db.config.themes=arr; S.save(); },
-  setFormats:   (arr) => { S.db.config.formats=arr; S.save(); },
-  setHooks:     (arr) => { S.db.config.hooks=arr; S.save(); },
-  setGoals:     (arr) => { S.db.config.goals=arr; S.save(); },
-  setPlatforms: (arr) => { S.db.config.platforms=arr; S.save(); },
+  setThemes:    async (arr) => { S.db.config.themes=arr; await SUPABASE.from('config').upsert({key:'themes',value:arr}); },
+  setFormats:   async (arr) => { S.db.config.formats=arr; await SUPABASE.from('config').upsert({key:'formats',value:arr}); },
+  setHooks:     async (arr) => { S.db.config.hooks=arr; await SUPABASE.from('config').upsert({key:'hooks',value:arr}); },
+  setGoals:     async (arr) => { S.db.config.goals=arr; await SUPABASE.from('config').upsert({key:'goals',value:arr}); },
+  setPlatforms: async (arr) => { S.db.config.platforms=arr; await SUPABASE.from('config').upsert({key:'platforms',value:arr}); },
 };
 
 // --- 发布选题 → 内容 ---
@@ -1225,111 +1157,6 @@ AI._processQueue = () => {
   if(AI._busy || AI._queue.length===0) return;
   const next = AI._queue.shift();
   next();
-};
-
-// --- 后台异步批量 AI 标注（不阻塞 UI） ---
-// 用法：AI.enqueueBatchEnrich(trendIds)
-// - 按 5 条一批调用 AI
-// - timeout 10s / retry 2 / 失败不报错
-// - 逐条更新 IndexedDB
-AI.enqueueBatchEnrich = (trendIds) => {
-  if(!trendIds || trendIds.length === 0) return;
-  if(!AI.isAvailable()) { console.log('🤖 AI 未配置，跳过标注'); return; }
-
-  const ids = [...trendIds]; // shallow copy
-  console.log('🤖 AI 后台标注启动: '+ids.length+' 条');
-
-  const BATCH_SIZE = 5;
-  const ENRICH_TIMEOUT = 10000;
-  const ENRICH_RETRIES = 2;
-  let stopFlag = false;
-
-  // 处理单个批次（5 条）
-  const enrichBatch = async (batchIds) => {
-    if(stopFlag) return;
-    const trends = batchIds.map(id => S.trends.get(id)).filter(Boolean);
-    if(trends.length === 0) return;
-
-    const titlesStr = trends.map((t,i)=>(i+1)+'. ['+t.source+'] '+t.title).join('\n');
-    const prompt = `以下是今日各平台热搜/热点列表，请为每条生成：
-1. 一句话摘要（≤30字）
-2. 1个可延展的选题方向（≤20字，适合小红书/抖音内容创作）
-
-请用 JSON 数组返回，格式：[{"idx":1,"summary":"...","contentDirection":"..."},...]
-如果无法生成，返回空数组 []。
-
-热点列表：
-${titlesStr}
-`;
-
-    for(let attempt = 0; attempt <= ENRICH_RETRIES; attempt++) {
-      try {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), ENRICH_TIMEOUT);
-        const resp = await fetch(AI._config.baseURL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer '+AI._config.apiKey },
-          body: JSON.stringify({ model: AI._config.model,
-            messages: [{ role:'system', content:'你是一个专业的内容运营助手。请严格按 JSON 格式返回。' }, { role:'user', content:prompt }],
-            temperature: 0.5, max_tokens: 2000,
-          }),
-          signal: controller.signal,
-        });
-        clearTimeout(timer);
-
-        if(!resp.ok) {
-          const errText = await resp.text().catch(()=>'');
-          if(resp.status >= 500) throw new Error('HTTP_'+resp.status+':'+errText.slice(0,100));
-          throw new Error('AI_HTTP_'+resp.status);
-        }
-
-        const json = await resp.json();
-        const content = json.choices?.[0]?.message?.content;
-        if(!content) break;
-
-        const jsonMatch = content.match(/\[[\s\S]*\]/);
-        if(!jsonMatch) break;
-
-        const enriched = JSON.parse(jsonMatch[0]);
-        enriched.forEach(e => {
-          const idx = (e.idx||1) - 1;
-          if(idx >= 0 && idx < trends.length) {
-            const t = trends[idx];
-            try {
-              S.trends.update(t.id, {
-                summary: e.summary||t.summary||'',
-                contentDirection: e.contentDirection||t.contentDirection||'',
-                updatedAt: H.nowISO(),
-              });
-            } catch(_) {}
-          }
-        });
-        console.log('🤖 AI 标注完成: '+batchIds.length+' 条');
-        return; // success
-
-      } catch(e) {
-        if(attempt < ENRICH_RETRIES) {
-          console.warn('🤖 AI 标注重试 '+(attempt+1)+'/'+ENRICH_RETRIES+': '+(e.message||'').slice(0,80));
-          await new Promise(r => setTimeout(r, 2000));
-        } else {
-          console.warn('🤖 AI 标注放弃 ('+batchIds.length+' 条): '+(e.message||'').slice(0,80));
-          // fallback: 不标注，原始数据仍然可用
-        }
-      }
-    }
-  };
-
-  // 分批次处理
-  const runAll = async () => {
-    for(let i = 0; i < ids.length; i += BATCH_SIZE) {
-      if(stopFlag) break;
-      const batch = ids.slice(i, i + BATCH_SIZE);
-      await enrichBatch(batch);
-    }
-    console.log('🤖 AI 后台标注全部完成');
-  };
-
-  runAll().catch(e => console.warn('🤖 AI 后台标注异常终止:', e.message));
 };
 
 // ==================== 核心：AI.request() ====================
@@ -3222,585 +3049,6 @@ P.renderCalendarPage = () => {
   P.renderCalendar('page-body-inner');
 };
 
-// ==================== 热点信号（独立页面） ====================
-
-P.renderSourceHub = () => {
-  document.getElementById('page-body').innerHTML = '<div id="source-hub-panel"></div>';
-  P._loadTrendCache();
-  P.renderTrends('source-hub-panel');
-};
-
-// ==================== 热点中心 ====================
-
-P._trendPage = 1;
-P._trendPageSize = 20;
-P._trendSearch = '';
-P._trendPlatform = 'all'; // all | weibo | douyin | baidu | zhihu | xiaohongshu
-
-P.renderTrends = (containerId) => {
-  const targetId = containerId||'page-body';
-  const all = S.trends.all();
-  let filtered = [...all];
-  if(P._trendSearch) {
-    const q = P._trendSearch.toLowerCase();
-    filtered = filtered.filter(t => (t.title||'').toLowerCase().includes(q) || (t.keywords||[]).some(k=>k.toLowerCase().includes(q)));
-  }
-  if(P._trendPlatform!=='all') filtered = filtered.filter(t => t.platform === P._trendPlatform);
-  filtered.sort((a,b)=>((b.publishedAt||b.createdAt||'')>(a.publishedAt||a.createdAt||'')?1:-1));
-
-  const total = filtered.length;
-  const pageSize = P._trendPageSize;
-  const totalPages = Math.max(1, Math.ceil(total/pageSize));
-  if(P._trendPage > totalPages) P._trendPage = totalPages;
-  const p = P._trendPage;
-  const startIdx = (p-1)*pageSize;
-  const pageItems = filtered.slice(startIdx, startIdx+pageSize);
-
-  let html = '';
-
-  // === 提前计算全局状态（供顶部 banner 使用） ===
-  const mockCount = all.filter(t => t.dataSourceType==='seed').length;
-  const realCount = all.filter(t => t.dataSourceType==='realtime').length;
-  const cacheCount = all.filter(t => t.dataSourceType==='cache').length;
-  const hasMockGlobal = mockCount > 0;
-  const hasRealGlobal = realCount > 0;
-  const hasCacheGlobal = cacheCount > 0;
-  const modeIcon = hasRealGlobal ? '🟢' : hasCacheGlobal ? '🟡' : '⚪';
-  const modeLabel = hasRealGlobal ? 'REAL（真实采集）' : hasCacheGlobal ? 'CACHE（缓存）' : 'MOCK（示例数据）';
-  const modeCls = hasRealGlobal ? 'bg-green-50 border-green-200 text-green-700' : hasCacheGlobal ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-gray-100 border-gray-200 text-gray-500';
-  let lastSyncTime = ''; let lastSyncSources = [];
-  try {
-    const syncRaw = localStorage.getItem('content_os_trend_sync_log');
-    if(syncRaw) {
-      const sync = JSON.parse(syncRaw);
-      lastSyncTime = sync.date || '';
-      if(sync.diag && sync.diag.sources) {
-        lastSyncSources = sync.diag.sources.filter(s=>s.status==='ok').map(s=>s.name);
-      }
-    }
-  } catch(_) {}
-
-  // === 顶部警告条（MOCK 模式时醒目提示） ===
-  if(hasMockGlobal && !hasRealGlobal) {
-    html += '<div class="mb-4 px-4 py-2.5 rounded-lg border border-red-200 bg-red-50 text-red-700 text-xs flex items-center gap-2">';
-    html += '<span class="font-semibold">⚠ 当前正在使用示例数据，真实采集失败</span>';
-    html += '<span class="text-red-400">｜</span>';
-    html += '<span class="text-red-500">所有数据源不可用（CORS/网络限制），点击 ▸ 展开卡片可查看失败原因</span>';
-    html += '</div>';
-  }
-
-  // filters
-  html += '<div class="flex items-center justify-between mb-4"><div class="flex flex-wrap items-center gap-1">';
-  [{k:'all',l:'全部'},{k:'weibo',l:'微博'},{k:'douyin',l:'抖音'},{k:'baidu',l:'百度'},{k:'zhihu',l:'知乎'},{k:'xiaohongshu',l:'小红书'}].forEach(pl=>{
-    html += '<button class="cos-btn cos-btn-xs '+(P._trendPlatform===pl.k?'cos-btn-primary':'cos-btn-ghost')+'" data-trend-platform="'+pl.k+'">'+pl.l+'</button>';
-  });
-  html += '</div><div class="flex items-center gap-1">';
-  html += '<input class="cos-input cos-input-sm" style="width:200px" placeholder="搜索标题/关键词..." value="'+H.esc(P._trendSearch)+'" id="trend-search-input">';
-  html += '<span class="text-xs text-gray-400" id="trend-sync-status"></span>';
-  html += '<button class="cos-btn cos-btn-secondary cos-btn-sm" id="trend-add-btn">+ 手动添加</button>';
-  html += '</div></div>';
-
-  // === 全局状态栏：模式 + 最近采集时间 + 来源 ===
-  html += '<div class="mb-3 px-4 py-2.5 rounded-lg border flex items-center flex-wrap gap-x-4 gap-y-1 '+modeCls+'">';
-  html += '<span class="text-xs font-semibold">'+modeIcon+' 当前模式：'+modeLabel+'</span>';
-  if(lastSyncTime) {
-    html += '<span class="text-[10px] opacity-70">最近采集：'+lastSyncTime+'</span>';
-    if(lastSyncSources.length > 0) html += '<span class="text-[10px] opacity-70">｜ 来源：'+lastSyncSources.join(' · ')+'</span>';
-  }
-  if(hasMockGlobal) {
-    html += '<span class="ml-auto text-[10px] text-red-500 font-medium">⚠ '+mockCount+' 条示例数据（非真实采集）</span>';
-  }
-  html += '</div>';
-
-  // 信号雷达统计条
-  const risingCount = filtered.filter(t => t.trend === 'rising').length;
-  const stableCount = filtered.filter(t => t.trend === 'stable').length;
-  const fallingCount = filtered.filter(t => t.trend === 'falling').length;
-  html += '<div class="flex items-center gap-3 mb-2 text-[10px] text-gray-400">';
-  html += '<span class="text-red-400">↑ '+risingCount+' 上升</span>';
-  html += '<span>→ '+stableCount+' 平稳</span>';
-  html += '<span class="text-blue-400">↓ '+fallingCount+' 下降</span>';
-  html += '<span class="text-gray-300">｜ '+filtered.length+' 个信号</span>';
-  if(hasMockGlobal) html += '<span class="text-gray-300">（含 '+mockCount+' 条 MOCK）</span>';
-  html += '</div>';
-
-  if(pageItems.length===0) {
-    // 兜底：表为空时检查是否有缓存可恢复
-    if(all.length===0) {
-      const cacheLoaded = P._loadTrendCache();
-      if(cacheLoaded > 0) {
-        setTimeout(() => rerender(), 0);
-        target.innerHTML = '<div class="text-center py-12 text-gray-400 text-sm">正在恢复缓存数据...</div>';
-        return;
-      }
-      // 绝对无数据：读取诊断日志展示精确原因
-      let diagMsg = '⚠️ 热点数据加载失败，系统将自动重试';
-      try {
-        const logRaw = localStorage.getItem('content_os_trend_sync_log');
-        if(logRaw) {
-          const log = JSON.parse(logRaw);
-          if(log.diag && log.diag.sources && log.diag.sources.length > 0) {
-            const srcs = log.diag.sources;
-            const typeLabels = {cors:'CORS跨域', network:'网络异常', timeout:'请求超时', empty_response:'无内容', unknown:'未知错误'};
-            // 按 errorType 分组统计
-            const groups = {};
-            srcs.forEach(s => { const t = s.errorType||s.status||'unknown'; groups[t] = (groups[t]||0)+1; });
-            const parts = [];
-            Object.keys(groups).forEach(t => {
-              parts.push(groups[t]+'源'+(typeLabels[t]||t));
-            });
-            if(parts.length > 0) {
-              const allCors = srcs.every(s => s.errorType === 'cors');
-              if(allCors) diagMsg = '🔒 所有数据源被 CORS 阻止（本地文件限制）\n请通过 http:// 访问此页面';
-              else diagMsg = '⚠️ 采集失败：'+parts.join('，');
-            }
-          }
-        }
-      } catch(_) {}
-      html += UI.emptyState(diagMsg);
-    } else {
-      html += UI.emptyState('没有匹配的热点');
-    }
-  } else {
-    html += '<div class="space-y-1.5">';
-    pageItems.forEach(t=>{
-      const isReal = t.dataSourceType === 'realtime';
-      const isSeed = t.dataSourceType === 'seed';
-      const heatMap = {1:'B',2:'B',3:'A',4:'A',5:'S'};
-      const heatGrade = heatMap[t.heatLevel||1]||'B';
-      const heatCls = heatGrade==='S'?'bg-red-500 text-white':heatGrade==='A'?'bg-orange-500 text-white':'bg-gray-300 text-gray-600';
-      const trendMap = { rising:{icon:'↑',label:'上升',cls:'text-red-500'}, stable:{icon:'→',label:'平稳',cls:'text-gray-400'}, falling:{icon:'↓',label:'下降',cls:'text-blue-500'} };
-      const tr = trendMap[t.trend] || trendMap.stable;
-      const originLabels = { realtime:{icon:'🟢',label:'REAL',cls:'text-green-500',title:'真实采集数据: '+((t.heat_value||0)>0?H.fmtNum(t.heat_value||0)+'热度 ':'')+((t.mention_count||0)>0?H.fmtNum(t.mention_count||0)+'提及':'')},
-        cache:{icon:'🟡',label:'CACHE',cls:'text-amber-500',title:'缓存数据'},
-        idb:{icon:'🔵',label:'IDB',cls:'text-blue-500',title:'历史数据'},
-        seed:{icon:'⚪',label:'MOCK',cls:'text-gray-300',title:'示例数据(非真实采集)'},
-        manual:{icon:'✏️',label:'手动',cls:'text-gray-400',title:'手动添加'},
-      };
-      const origin = originLabels[t.dataSourceType] || originLabels.seed;
-      const platformBadges = {
-        weibo:'bg-red-50 text-red-600', douyin:'bg-gray-200 text-gray-700', baidu:'bg-blue-50 text-blue-600',
-        zhihu:'bg-blue-100 text-blue-800', xiaohongshu:'bg-red-50 text-red-600',
-      };
-      const platformLabel = {weibo:'微博',douyin:'抖音',baidu:'百度',zhihu:'知乎',xiaohongshu:'小红书'};
-      const kwLine = (t.keywords||[]).slice(0,3).map(k=>H.esc(k)).join(' · ');
-      const hv = (t.heat_value||0)>0 ? H.fmtNum(t.heat_value||0) : '';
-      const mc = (t.mention_count||0)>0 ? H.fmtNum(t.mention_count||0) : '';
-
-      html += '<div class="cos-card px-4 py-2 hover:shadow-sm transition-all cursor-pointer group'+(isSeed?' opacity-60':'')+'" data-trend-expand="'+t.id+'">';
-      // 主行: 数据源origin + 趋势 + 热度 + 平台 + 原始标题 + heat_value
-      html += '<div class="flex items-center gap-1.5">';
-      // 数据来源指示
-      html += '<span class="text-[10px] '+origin.cls+'" title="'+origin.title+'">'+origin.icon+'</span>';
-      // 趋势箭头
-      html += '<span class="text-xs font-bold '+tr.cls+'" title="'+tr.label+'">'+tr.icon+'</span>';
-      // 热度等级
-      html += '<span class="inline-flex items-center justify-center w-4 h-4 rounded text-[9px] font-bold '+heatCls+'">'+heatGrade+'</span>';
-      // 来源标签
-      html += '<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium '+((platformBadges[t.platform]||'bg-gray-100 text-gray-600'))+'">'+(platformLabel[t.platform]||t.platform||'?')+'</span>';
-      // 原始标题 (raw_title)
-      html += '<span class="flex-1 text-xs text-gray-800 truncate" title="原始: '+H.esc(t.raw_title||t.title||'')+'">'+H.esc(t.raw_title||t.title||'')+'</span>';
-      // 热度值
-      if(hv) html += '<span class="text-[10px] text-red-400 font-mono" title="热度值">'+hv+'</span>';
-      if(mc) html += '<span class="text-[10px] text-gray-400 font-mono" title="提及量">'+mc+'</span>';
-      // 操作按钮 (hover)
-      html += '<span class="hidden group-hover:flex items-center gap-0.5 shrink-0">';
-      if(t.contentDirection && !isSeed) html += '<button class="cos-btn cos-btn-ghost cos-btn-xs text-blue-500 !text-[10px] !px-1" data-trend-to-topic="'+t.id+'">→选题</button>';
-      html += '<button class="cos-btn cos-btn-ghost cos-btn-xs !text-[10px] !px-1" data-edit-trend="'+t.id+'">✏️</button>';
-      html += '<button class="cos-btn cos-btn-ghost cos-btn-xs !text-[10px] !px-1 text-red-400" data-delete-trend="'+t.id+'">✕</button>';
-      html += '</span>';
-      html += '<span class="text-[10px] text-gray-300 shrink-0" data-trend-expand-toggle="'+t.id+'">▸</span>';
-      html += '</div>';
-
-      // 展开详情（原始数据面板）
-      html += '<div class="hidden mt-2 pt-2 border-t border-gray-100 text-[11px] text-gray-500 space-y-1" data-trend-expand-detail="'+t.id+'">';
-      if(t.raw_title && t.raw_title !== t.title) html += '<p>📋 原始标题：'+H.esc(t.raw_title)+'</p>';
-      if(t.source_url) html += '<p>🔗 <a href="'+H.esc(t.source_url)+'" target="_blank" rel="noopener" class="text-blue-500 underline hover:text-blue-700">查看原始来源 →</a></p>';
-      if((t.platform_post_ids||[]).length>0) html += '<p>🆔 Post IDs: '+(t.platform_post_ids||[]).join(', ')+'</p>';
-      if(t.heat_value>0) html += '<p>📊 热度值：'+H.fmtNum(t.heat_value)+' ｜ 提及量：'+H.fmtNum(t.mention_count||0)+'</p>';
-      html += '<p class="text-gray-400">数据来源：'+(originLabels[t.dataSourceType]?originLabels[t.dataSourceType].icon+' '+originLabels[t.dataSourceType].label:t.dataSourceType||'?')+' ｜ 趋势：'+tr.label+' ｜ 采集：'+H.fmtDate(t.fetchedAt)+'</p>';
-      if(t.summary) html += '<p class="text-gray-400">📝 '+H.esc(t.summary)+'</p>';
-      if(t.contentDirection && !isSeed) html += '<p class="text-blue-500">🎯 选题方向：'+H.esc(t.contentDirection)+'</p>';
-      if(t.hookStructure) html += '<p class="text-gray-400">💡 '+H.esc(t.hookStructure)+'</p>';
-      if(kwLine) html += '<p class="text-gray-300">关键词：'+kwLine+'</p>';
-      html += '</div>';
-
-      html += '</div>';
-    });
-    html += '</div>';
-  }
-
-  const target = document.getElementById(targetId);
-  if(!target) return;
-  target.innerHTML = html;
-
-  // events
-  const rerender = () => P.renderSourceHub();
-  document.querySelectorAll('[data-trend-platform]').forEach(b=>{
-    b.onclick = () => { P._trendPlatform = b.dataset.trendPlatform; P._trendPage = 1; rerender(); };
-  });
-  const searchEl = document.getElementById('trend-search-input');
-  if(searchEl) {
-    let composing=false, debounceTimer=null;
-    searchEl.addEventListener('compositionstart',()=>{composing=true;});
-    searchEl.addEventListener('compositionend',(e)=>{composing=false;P._trendSearch=e.target.value;P._trendPage=1;rerender();});
-    searchEl.addEventListener('input',(e)=>{if(composing)return;clearTimeout(debounceTimer);debounceTimer=setTimeout(()=>{P._trendSearch=e.target.value;P._trendPage=1;rerender();},350);});
-  }
-  const addBtn = document.getElementById('trend-add-btn');
-  if(addBtn) addBtn.onclick = () => P._openTrendModal(null, rerender);
-  // 显示同步状态（四态 + 诊断）
-  const syncStatus = document.getElementById('trend-sync-status');
-  if(syncStatus) {
-    try {
-      const logRaw = localStorage.getItem('content_os_trend_sync_log');
-      if(logRaw) {
-        const log = JSON.parse(logRaw);
-        const icons = { success:'🟢', partial:'🟡', fallback:'🔴', failed:'🔴', error:'🔴', seeded:'🔧' };
-        const labels = { success:'同步完成', partial:'部分成功', fallback:'源均失败', failed:'同步失败', error:'异常', seeded:'本地种子' };
-        syncStatus.textContent = (icons[log.status]||'⚪')+' '+(labels[log.status]||log.status)+
-          ' · '+log.sourceCount+'/'+log.totalSources+' 源 · '+log.date;
-        const diagInfo = log.diag ? '\n---诊断---\n'
-          +log.diag.sources.map(s=>{
-            const etLabels = {cors:'CORS跨域', network:'网络异常', timeout:'请求超时', empty_response:'无内容', ok:'正常', unknown:'未知'};
-            const et = s.errorType||s.status||'unknown';
-            return '  '+s.name+': '+(etLabels[et]||et)+(s.error?' ('+s.error+')':'');
-          }).join('\n')
-          +'\n步骤: '+log.diag.step+' | IDB: '+log.diag.idbCount+' | 缓存: '+log.diag.cacheAvailable
-          : '';
-        syncStatus.title = log.msg + (log.errors.length>0 ? '\n错误: '+log.errors.join('; ') : '') + diagInfo;
-        if(log.status==='failed'||log.status==='error'||log.status==='fallback') syncStatus.className = 'text-xs text-red-400 cursor-help';
-        else if(log.status==='partial'||log.status==='seeded') syncStatus.className = 'text-xs text-amber-500 cursor-help';
-        else syncStatus.className = 'text-xs text-gray-400';
-      } else {
-        const lastFetchDate = localStorage.getItem('content_os_last_trend_fetch');
-        syncStatus.textContent = lastFetchDate ? '上次同步：'+lastFetchDate : '等待同步...';
-      }
-    } catch(_) {
-      const lastFetchDate = localStorage.getItem('content_os_last_trend_fetch');
-      syncStatus.textContent = lastFetchDate ? '上次同步：'+lastFetchDate : '等待同步...';
-    }
-  }
-  document.querySelectorAll('[data-edit-trend]').forEach(el=>el.onclick=(e)=>{e.stopPropagation();P._openTrendModal(el.dataset.editTrend,rerender);});
-  document.querySelectorAll('[data-delete-trend]').forEach(el=>el.onclick=async(e)=>{e.stopPropagation();const cfm=await UI.confirm('删除热点','确定删除？',{danger:true,confirmText:'删除'});if(cfm){S.trends.remove(el.dataset.deleteTrend);UI.toast('已删除');rerender();}});
-  document.querySelectorAll('[data-trend-to-topic]').forEach(el=>el.onclick=async(e)=>{e.stopPropagation();await P._trendToTopic(el.dataset.trendToTopic);rerender();});
-  // 点击卡片展开/折叠详情
-  document.querySelectorAll('[data-trend-expand]').forEach(el=>{
-    el.onclick = (e) => {
-      if(e.target.closest('[data-edit-trend],[data-delete-trend],[data-trend-to-topic]')) return;
-      const id = el.dataset.trendExpand;
-      const detail = el.querySelector('[data-trend-expand-detail="'+id+'"]');
-      const toggle = el.querySelector('[data-trend-expand-toggle="'+id+'"]');
-      if(detail) { detail.classList.toggle('hidden'); if(toggle) toggle.textContent = detail.classList.contains('hidden')?'▸':'▾'; }
-    };
-  });
-};
-
-// --- 热点新增/编辑 Modal ---
-P._openTrendModal = async (trendId, onSaved) => {
-  const isEdit = !!trendId;
-  const t = isEdit ? S.trends.get(trendId) : {};
-  const platformOptions = [
-    {v:'weibo',l:'微博'},{v:'douyin',l:'抖音'},{v:'baidu',l:'百度'},{v:'zhihu',l:'知乎'},{v:'xiaohongshu',l:'小红书'}
-  ];
-  const platformSelect = platformOptions.map(p=>'<option value="'+p.v+'" '+((t.platform||'')===p.v?'selected':'')+'>'+p.l+'</option>').join('');
-  const srcLabels = {realtime:'🟢 实时采集', cache:'🟡 缓存恢复', idb:'🔵 历史数据', seed:'⚪ 示例数据', manual:'✏️ 手动添加'};
-  const srcTypeLine = isEdit && t.dataSourceType
-    ? '<div class="text-xs text-gray-400 mb-4">数据来源：'+(srcLabels[t.dataSourceType]||t.dataSourceType)+'</div>'
-    : '';
-  const html = `<div class="p-6">
-    <h2 class="text-base font-semibold text-gray-900 mb-5">${isEdit?'编辑热点':'新增热点'}</h2>
-    ${srcTypeLine}
-    <form id="trend-form" class="space-y-4">
-      <div>${UI.renderField('标题 *','title','text',t.title||'',null,'热点标题')}</div>
-      <div class="grid grid-cols-2 gap-4">
-        <div><label class="cos-label">来源 *</label><select class="cos-select" name="platform"><option value="">选择来源</option>${platformSelect}</select></div>
-        <div><label class="cos-label">热度</label><select class="cos-select" name="heatLevel"><option value="5" ${(t.heatLevel||3)===5?'selected':''}>S 级 🔥🔥🔥🔥🔥</option><option value="4" ${t.heatLevel===4?'selected':''}>A 级 🔥🔥🔥🔥</option><option value="3" ${(t.heatLevel||3)===3?'selected':''}>A 级 🔥🔥🔥</option><option value="2" ${t.heatLevel===2?'selected':''}>B 级 🔥🔥</option><option value="1" ${t.heatLevel===1?'selected':''}>B 级 🔥</option></select></div>
-      </div>
-      <div class="grid grid-cols-3 gap-4">
-        <div><label class="cos-label">趋势</label><select class="cos-select" name="trend"><option value="rising" ${(t.trend||'stable')==='rising'?'selected':''}>↑ 上升</option><option value="stable" ${(t.trend||'stable')==='stable'?'selected':''}>→ 平稳</option><option value="falling" ${t.trend==='falling'?'selected':''}>↓ 下降</option></select></div>
-      </div>
-      <div>${UI.renderField('关键词','keywords_str','text',(t.keywords||[]).join(', '),null,'逗号分隔')}</div>
-      <div class="grid grid-cols-3 gap-4">
-        <div>${UI.renderField('热度值','heat_value','number',t.heat_value||'',null,'数值')}</div>
-        <div>${UI.renderField('提及量','mention_count','number',t.mention_count||'',null,'数值')}</div>
-        <div>${UI.renderField('Post IDs','platform_post_ids','text',(t.platform_post_ids||[]).join(', '),null,'逗号分隔')}</div>
-      </div>
-      <div>${UI.renderField('来源URL','source_url','url',t.source_url||t.sourceLink||'',null,'原始链接')}</div>
-      <div>${UI.renderField('原始标题','raw_title','text',t.raw_title||'',null,'采集时的原始标题')}</div>
-      <div>${UI.renderField('摘要','summary','textarea',t.summary||'',null,'AI 或手动生成的热点摘要')}</div>
-      <div>${UI.renderField('可延展选题方向','contentDirection','text',t.contentDirection||'',null,'这个热点可以做什么选题')}</div>
-      <div>${UI.renderField('爆点结构','hookStructure','textarea',t.hookStructure||'',null,'(旧字段)爆款结构')}</div>
-      <div class="grid grid-cols-2 gap-4">
-        <div>${UI.renderField('发布时间','publishedAt','date',t.publishedAt||'',null,'内容发布日')}</div>
-        <div>${UI.renderField('内容链接','sourceLink','url',t.sourceLink||'',null,'原始链接')}</div>
-      </div>
-      <div class="flex justify-end gap-3 pt-2">
-        <button type="button" class="cos-btn cos-btn-secondary" data-modal-action="cancel">取消</button>
-        ${isEdit?'<button type="button" class="cos-btn cos-btn-danger cos-btn-sm" id="trend-delete-btn" style="margin-right:auto">🗑️ 删除</button>':''}
-        <button type="button" class="cos-btn cos-btn-primary" id="trend-save-btn">保存</button>
-      </div>
-    </form>
-  </div>`;
-
-  const mp = UI.openModal(html);
-  setTimeout(()=>{
-    document.getElementById('trend-save-btn').onclick = () => {
-      const form = document.getElementById('trend-form'); if(!form) return;
-      const data = UI.readForm(form);
-      if(!data.title.trim()) { UI.toast('标题不能为空','error'); return; }
-      if(!data.platform) { UI.toast('请选择平台','error'); return; }
-      UI.closeModal(data);
-    };
-    if(isEdit) {
-      document.getElementById('trend-delete-btn').onclick = async () => {
-        const cfm = await UI.confirm('删除热点','确定删除？',{danger:true,confirmText:'删除'});
-        if(cfm) { S.trends.remove(trendId); UI.closeModal({}); UI.toast('已删除'); if(onSaved) onSaved(); }
-      };
-    }
-  }, 50);
-  const result = await mp;
-  if(!result||result==='cancel') return;
-  const keywords = (result.keywords_str||'').split(',').map(s=>s.trim()).filter(Boolean);
-  delete result.keywords_str;
-  const heatLevel = parseInt(result.heatLevel)||3;
-  const trend = result.trend || H.heatToTrend(heatLevel);
-  const data = {...result, keywords, heatLevel, trend, summary: result.summary||'', contentDirection: result.contentDirection||''};
-  if(isEdit) {
-    S.trends.update(trendId, data);
-    UI.toast('已更新');
-  } else {
-    S.trends.add({
-      id: H.uid('trd_'),
-      title: data.title, raw_title: data.raw_title||data.title, platform: data.platform, heatLevel: data.heatLevel,
-      heat_value: parseInt(data.heat_value)||0, mention_count: parseInt(data.mention_count)||0,
-      keywords: data.keywords, summary: data.summary, contentDirection: data.contentDirection,
-      trend: data.trend||'stable',
-      hookStructure: data.hookStructure||'',
-      publishedAt: data.publishedAt||null, source_url: data.source_url||data.sourceLink||null, sourceLink: data.sourceLink||null,
-      platform_post_ids: (data.platform_post_ids||'').split(',').map(s=>s.trim()).filter(Boolean),
-      dataSourceType: 'manual',
-      createdAt: H.nowISO(), updatedAt: H.nowISO(),
-    });
-    UI.toast('已添加');
-  }
-  if(onSaved) onSaved();
-};
-
-// ==================== 热点自动采集 Pipeline ====================
-// 前端唯一数据入口：fetch /api/hotspots
-// 后端 hotspot-service.js 负责：采集 → 标准化 → 去重 → 缓存
-// 前端只负责：请求 → 渲染
-
-P._trendSources = [
-  { id:'weibo', name:'微博' },
-  { id:'zhihu', name:'知乎' },
-  { id:'baidu', name:'百度' },
-];
-
-// --- 统一数据入口 ---
-P._fetchFromService = async () => {
-  const apiBase = '/api/hotspots';
-  console.log('[HOTSPOT] 请求中台 ' + apiBase + ' ...');
-  try {
-    const resp = await fetch(apiBase, { headers: { 'Accept': 'application/json' } });
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    return await resp.json();
-  } catch (e) {
-    console.warn('[HOTSPOT] 中台不可达: ' + e.message);
-    return { mode: 'BACKEND_UNREACHABLE', items: [], sources: [], error: e.message };
-  }
-};
-
-// --- 主采集流程（统一走中台 /api/hotspots） ---
-P._fetchHotspots = async () => {
-  const totalSources = P._trendSources.length;
-  const diag = { step:'init', time: new Date().toISOString(), sources:[], totalReal:0, totalSkip:0 };
-  const errors = [];
-
-  // === 唯一入口：请求中台 /api/hotspots ===
-  const resp = await P._fetchFromService();
-
-  if (resp.mode === 'BACKEND_UNREACHABLE') {
-    console.log('[HOTSPOT] BACKEND UNREACHABLE — 中台无响应');
-    // 降级链: IDB / localStorage / seed
-    const cached = S.trends.all();
-    diag.idbCount = cached.length;
-    if (cached.length > 0) {
-      const cutoff = new Date(Date.now() - 7*86400000).toISOString();
-      S.trends.all().filter(t => t.dataSourceType !== 'seed' && (t.fetchedAt||t.createdAt||'') < cutoff).forEach(t => S.trends.remove(t.id));
-      const remaining = S.trends.all().length;
-      diag.finalCount = remaining; diag.isReal = false;
-      localStorage.setItem('content_os_trend_diag', JSON.stringify(diag));
-      return { status:'fallback', sourceCount:0, totalSources, addedCount:0,
-        msg:'⚠️ 中台不可达，已切换到历史数据（'+remaining+'条）', errors:['中台无响应'], diag };
-    }
-    return _seedFallback(diag, totalSources, []);
-  }
-
-  // === 中台返回数据 ===
-  const isReal = resp.mode === 'REAL';
-  const isCached = resp.from_cache;
-  const svcSources = resp.sources || [];
-  const svcItems = resp.items || [];
-  const svcErrors = resp.errors || [];
-
-console.log(isReal ? '[HOTSPOT] REAL MODE ACTIVE ('+svcSources.length+'/'+totalSources+' 源)'+(isCached?' [缓存命中]':'') : '[HOTSPOT] MOCK MODE');
-  svcSources.forEach(s => console.log('  '+s+': OK'));
-  svcErrors.forEach(e => console.log('  '+e));
-
-  if (svcItems.length === 0) {
-    diag.isReal = false; diag.sources = svcSources.map(n=>({name:n,status:'empty'}));
-    return _seedFallback(diag, totalSources, svcErrors);
-  }
-
-  // === 映射到 IndexedDB schema ===
-  const mapped = svcItems.map((item, i) => {
-    const platform = item.source || 'unknown';
-    const srcMeta = P._trendSources.find(s => s.id === platform) || {};
-    return {
-      title: item.title || '',
-      raw_title: item.title || '',
-      platform,
-      source: item.sourceName || srcMeta.name || platform,
-      heatLevel: item.heatLevel || 3,
-      heat_value: item.heat || 0,
-      mention_count: 0,
-      trend: H.heatToTrend(item.heatLevel || 3),
-      keywords: [],
-      summary: '', contentDirection: '', hookStructure: '',
-      publishedAt: null,
-      source_url: item.url || null,
-      sourceLink: item.url || null,
-      platform_post_ids: item.mid ? [item.mid] : [],
-      rank: item.rank || (i + 1),
-      dataSourceType: 'realtime',
-      fetchedAt: item.timestamp || resp.timestamp || H.nowISO(),
-    };
-  });
-
-  diag.step = 'fetched'; diag.isReal = isReal;
-  diag.totalRaw = mapped.length; diag.sourceCount = svcSources.length;
-  diag.totalReal = svcSources.length;
-  diag.sources = svcSources.map(n => ({ name:n, status:'ok', mode:isReal?'REAL':'MOCK' }));
-  if (svcErrors.length) diag.sources.push(...svcErrors.map(e => ({ name:e, status:'error' })));
-
-  // --- AI 异步入队 ---
-  const needAI = AI.isAvailable() && mapped.length > 0;
-
-  // --- 清理旧热点 ---
-  const cutoff = new Date(Date.now() - 7*86400000).toISOString();
-  S.trends.all().filter(t => t.dataSourceType !== 'seed' && (t.fetchedAt||t.createdAt||'') < cutoff).forEach(t => S.trends.remove(t.id));
-
-  // --- 写库 ---
-  const existing = S.trends.all();
-  const norm = (s) => (s||'').toLowerCase().replace(/[^\u4e00-\u9fa5a-z0-9]/g,'');
-  const existingTitles = new Set(existing.map(t => norm(t.title)));
-  let addedCount = 0;
-  const addedIds = [];
-  for(const item of mapped) {
-    if(existingTitles.has(norm(item.title))) continue;
-    const id = H.uid('trd_');
-    addedIds.push(id);
-    S.trends.add({ id, ...item, createdAt: H.nowISO(), updatedAt: H.nowISO() });
-    existingTitles.add(norm(item.title));
-    addedCount++;
-  }
-
-  // --- localStorage 备份 ---
-  try { localStorage.setItem('content_os_trends_cache', JSON.stringify(S.trends.all().slice(0, 50))); } catch(_) {}
-
-  // --- AI 异步入队 ---
-  if(needAI && addedIds.length > 0) {
-    setTimeout(() => AI.enqueueBatchEnrich(addedIds), 200);
-    console.log('🤖 AI 标注已入队: '+addedIds.length+' 条（后台处理）');
-  }
-
-  const status = svcSources.length === totalSources ? 'success' : 'partial';
-  localStorage.setItem('content_os_trend_diag', JSON.stringify(diag));
-  return { status, sourceCount: svcSources.length, totalSources, addedCount,
-    msg: (isCached?'[CACHE] ':'')+'成功采集 '+svcSources.length+'/'+totalSources+' 个源，新增 '+addedCount+' 条热点', errors: svcErrors, diag };
-};
-
-// --- 种子兜底（中台不可用时最后手段） ---
-function _seedFallback(diag, totalSources, errors) {
-  diag.step = 'seeding';
-  const seed = [
-    {title:'2026下半年最值得关注的5个AI趋势', raw_title:'2026下半年最值得关注的5个AI趋势', platform:'zhihu', heatLevel:5, heat_value:0, mention_count:0, trend:'rising', keywords:['AI','趋势','科技'], summary:'AI Agent、多模态、端侧推理等话题持续升温', contentDirection:'盘点AI行业最新落地案例', source_url:'https://www.zhihu.com/', platform_post_ids:[]},
-    {title:'年轻人开始反向消费：二手平台交易额创新高', raw_title:'年轻人开始反向消费', platform:'weibo', heatLevel:5, heat_value:0, mention_count:0, trend:'rising', keywords:['消费','二手','年轻人'], summary:'闲鱼等平台日活破亿，Z世代成为二手交易主力', contentDirection:'反向消费背后的心理洞察', source_url:'https://s.weibo.com/', platform_post_ids:[]},
-    {title:'暑期旅游旺季来了！小众目的地搜索量暴涨300%', raw_title:'暑期旅游旺季来了！小众目的地搜索量暴涨300%', platform:'baidu', heatLevel:4, heat_value:0, mention_count:0, trend:'rising', keywords:['旅游','暑期','小众'], summary:'避开人潮的「反向旅游」成为新趋势', contentDirection:'小众旅行地种草清单系列', source_url:'https://www.baidu.com/', platform_post_ids:[]},
-    {title:'小红书电商GMV首次突破万亿', raw_title:'小红书电商GMV首次突破万亿', platform:'xiaohongshu', heatLevel:5, heat_value:0, mention_count:0, trend:'rising', keywords:['电商','小红书','GMV'], summary:'买手电商模式验证成功，社区+交易闭环成型', contentDirection:'小红书电商运营实操全流程', source_url:'https://www.xiaohongshu.com/', platform_post_ids:[]},
-    {title:'多邻国学中文用户增长200%', raw_title:'多邻国学中文用户增长200%', platform:'zhihu', heatLevel:3, heat_value:0, mention_count:0, trend:'stable', keywords:['中文','多邻国','文化'], summary:'全球中文学习热潮，内容出海迎来新机遇', contentDirection:'中文学习类内容出海选题', source_url:'https://www.zhihu.com/', platform_post_ids:[]},
-  ];
-  seed.forEach(s => {
-    S.trends.add({
-      id: H.uid('trd_'),
-      title: s.title, raw_title: s.raw_title||s.title, platform: s.platform, heatLevel: s.heatLevel,
-      heat_value: s.heat_value||0, mention_count: s.mention_count||0,
-      trend: s.trend||'stable', keywords: s.keywords, summary: s.summary,
-      contentDirection: s.contentDirection, hookStructure: '',
-      publishedAt: null, source_url: s.source_url||null, sourceLink: s.source_url||null,
-      platform_post_ids: s.platform_post_ids||[],
-      dataSourceType: 'seed',
-      fetchedAt: H.nowISO(), createdAt: H.nowISO(), updatedAt: H.nowISO(),
-    });
-  });
-  diag.finalCount = seed.length; diag.seeded = true;
-  localStorage.setItem('content_os_trend_diag', JSON.stringify(diag));
-  localStorage.setItem('content_os_trends_cache', JSON.stringify(S.trends.all().slice(0,50)));
-  return { status:'seeded', sourceCount:0, totalSources, addedCount:seed.length,
-    msg:'🔧 中台不可达，已加载示例热点数据', errors, diag };
-}
-
-// --- 从 localStorage 恢复热点缓存 ---
-P._loadTrendCache = () => {
-  try {
-    const raw = localStorage.getItem('content_os_trends_cache');
-    if(!raw) return 0;
-    const items = JSON.parse(raw);
-    if(!Array.isArray(items)||items.length===0) return 0;
-    const existing = S.trends.all();
-    const existingIds = new Set(existing.map(t=>t.id));
-    let loaded = 0;
-    items.forEach(item=>{
-      if(existingIds.has(item.id)) return;
-      // 旧数据补缺
-      if(!item.dataSourceType) item.dataSourceType = 'cache';
-      if(!item.trend) item.trend = H.heatToTrend(item.heatLevel||3);
-      if(!item.raw_title) item.raw_title = item.title;
-      if(item.heat_value===undefined) item.heat_value = 0;
-      if(item.mention_count===undefined) item.mention_count = 0;
-      if(!item.source_url) item.source_url = item.sourceLink||null;
-      if(!item.platform_post_ids) item.platform_post_ids = [];
-      S.trends.add(item);
-      existingIds.add(item.id);
-      loaded++;
-    });
-    return loaded;
-  } catch(_) { return 0; }
-};
-
-// --- 转入选题库 ---
-P._trendToTopic = async (trendId) => {
-  const t = S.trends.get(trendId);
-  if(!t) return;
-  if(t.dataSourceType === 'seed') { UI.toast('⚪ 示例数据不可转为选题','error'); return; }
-  const direction = t.contentDirection || t.title;
-  S.topics.add({
-    id: H.uid('top_'),
-    title: direction.length > 50 ? direction.slice(0,50)+'…' : direction,
-    description: '来源：'+t.platform+' 热点「'+t.title+'」\n'+(t.summary||''),
-    status: 'todo',
-    priority: (t.heatLevel||3)>=4?'P1':'P2',
-    theme: '', format: '', hook: '', goal: '', platform: '',
-    tags: [...(t.keywords||[]), '热点'],
-    rating: null, workload: null, estimatedDate: null, publishedDate: null,
-    createdAt: H.nowISO(), updatedAt: H.nowISO(),
-  });
-  UI.toast('✅ 已转入选题库');
-};
-
-// ==================== 配置中心页面 ====================
-
 // ==================== 系统设置：Tab 页 ====================
 
 P._settingsTab = 'data'; // data | backups | config
@@ -3966,7 +3214,6 @@ P._renderSettingsTab_Data = () => {
     users: S.users.all().length,
     knowledge: S.knowledge.all().length,
     competitors: S.competitors.all().length,
-    trends: S.trends.all().length,
   };
 
   const html = `
@@ -4035,7 +3282,7 @@ P._renderSettingsTab_Data = () => {
         <h3 class="text-sm font-semibold text-gray-700 mb-3">🗄️ IndexedDB 管理</h3>
         <div class="text-xs text-gray-500 space-y-1 mb-3">
           <div>数据库：ContentOS</div>
-          <div>Object Stores：${['inspirations','topics','contents','users','knowledge','competitors','trends','images','backups'].join(', ')}</div>
+          <div>Object Stores：${['inspirations','topics','contents','users','knowledge','competitors','images','backups'].join(', ')}</div>
           <div>容量限制：无（由浏览器磁盘空间决定）</div>
         </div>
         <button class="cos-btn cos-btn-secondary cos-btn-sm" id="btn-idb-clean">清理图片缓存</button>
@@ -4075,7 +3322,7 @@ P._renderSettingsTab_Data = () => {
     const confirmed = await UI.confirm('重置数据','确定要清空所有数据？建议先导出备份。',{danger:true,confirmText:'确认重置'});
     if(confirmed) {
       S.db = S.emptyDB();
-      await S._idb.clearAll(['inspirations','topics','contents','users','knowledge','competitors','trends','images','config','backups']);
+      await S._idb.clearAll(['inspirations','topics','contents','users','knowledge','competitors','images','config','backups']);
       await S._doSave();
       UI.toast('数据已重置');
       P._renderSettingsTab_Data();
@@ -5156,12 +4403,9 @@ P.routes = {
   contents: () => { P._setHeader('内容库', '已完成内容的归档管理'); P.renderContentsPage(); },
   calendar:   () => { P._setHeader('内容日历', '排期与发布计划'); P.renderCalendarPage(); },
   'content-center': () => { P._setHeader('选题库', '管理内容选题与优先级'); P.renderTopicsPage(); },
-  'source-hub': () => { P._setHeader('热点信号', '实时趋势采集 · 选题灵感'); P.renderSourceHub(); },
   analytics:  () => { P._setHeader('数据分析', '运营数据可视化'); P.renderAnalytics(); },
   users:      () => { P._setHeader('内测用户', '用户投放管理与追踪'); P.renderUsers(); },
   knowledge:  () => { P._setHeader('知识库', '运营方法 · 钩子 · 结构 · 文案 · 转化 · 复盘'); P.renderKnowledge(); },
-  competitors:() => { P._setHeader('热点信号', '实时趋势采集 · 选题灵感'); P.renderSourceHub(); },
-  templates:  () => { P._setHeader('热点信号', '实时趋势采集 · 选题灵感'); P.renderSourceHub(); },
   backups:    () => { P._settingsTab='backups'; P._setHeader('系统设置', '数据 · 备份 · 配置'); P.renderSettings(); },
   settings:   () => { P._setHeader('系统设置', '数据 · 备份 · 配置'); P.renderSettings(); },
   data:       () => { P._settingsTab='data'; P._setHeader('系统设置', '数据 · 备份 · 配置'); P.renderSettings(); },
@@ -5217,7 +4461,6 @@ R._routeToNav = {
   inspirations:'inspirations',
   topics:'topics', contents:'contents', calendar:'calendar',
   'content-center':'topics',
-  'source-hub':'inspirations', trends:'inspirations', competitors:'inspirations',
   analytics:'analytics', users:'users', knowledge:'knowledge',
   backups:'settings', settings:'settings', data:'settings',
 };
@@ -5259,12 +4502,9 @@ async function init() {
   // 1. 加载数据（异步）
   await S.load();
 
+
   // 1.5 每日备份提醒
   S.checkDailyReminder();
-
-  // 1.6 恢复热点缓存
-  const cacheLoaded = P._loadTrendCache();
-  if(cacheLoaded > 0) console.log('📦 从缓存恢复了 '+cacheLoaded+' 条热点');
 
   // 2. 初始化侧边栏
   R.initSidebar();
@@ -5295,68 +4535,6 @@ async function init() {
 
   // 6. 显示初始 Toast
   UI.toast('Content OS 已就绪', 'info');
-
-  // 7. 热点采集服务层（后台独立运行，UI不触发采集）
-  const hotRun = async () => {
-    const todayKey = H.today();
-    const lastFetchDate = localStorage.getItem('content_os_last_trend_fetch');
-    const tableEmpty = S.trends.all().length === 0;
-    const hour = new Date().getHours();
-
-    // 今天已采过 → 跳过（除非表为空）
-    if(!tableEmpty && lastFetchDate === todayKey) return;
-
-    // 未到 9 点且表不为空 → 跳过
-    if(!tableEmpty && hour < 9) return;
-
-    // 检查上次是否纯 CORS 失败（无意义重试）
-    if(!tableEmpty) {
-      try {
-        const lastLogRaw = localStorage.getItem('content_os_trend_sync_log');
-        if(lastLogRaw) {
-          const lastLog = JSON.parse(lastLogRaw);
-          if(lastLog.diag && lastLog.diag.sources && lastLog.diag.sources.length > 0) {
-            const allCors = lastLog.diag.sources.every(s => s.errorType === 'cors');
-            if(allCors) {
-              console.log('🕘 上次采集均为 CORS 错误，跳过重试（无意义）');
-              return;
-            }
-          }
-        }
-      } catch(_) {}
-    }
-
-    const trigger = tableEmpty ? '表为空' : '每日09:00';
-    console.log('🕘 ['+trigger+'] 后台热点采集启动...');
-      const startTime = new Date().toISOString();
-      let logEntry;
-      try {
-        const r = await P._fetchHotspots();
-        console.log('✅ 后台采集:', r.msg);
-        logEntry = {
-          date: todayKey, time: startTime, trigger,
-          status: r.status, sourceCount: r.sourceCount, totalSources: r.totalSources,
-          addedCount: r.addedCount, totalInDB: S.trends.all().length,
-          msg: r.msg, errors: r.errors||[], diag: r.diag||null,
-        };
-      } catch(e) {
-        console.warn('后台采集失败:', e.message);
-        logEntry = {
-          date: todayKey, time: startTime, trigger,
-          status: 'error', sourceCount: 0, totalSources: P._trendSources.length,
-          addedCount: 0, totalInDB: S.trends.all().length,
-          msg: '采集异常: '+e.message, errors: [e.message],
-        };
-      }
-      localStorage.setItem('content_os_last_trend_fetch', todayKey);
-      localStorage.setItem('content_os_trend_sync_log', JSON.stringify(logEntry));
-      if(R.currentRoute === 'source-hub') {
-        const panel = document.getElementById('source-hub-panel');
-        if(panel) P.renderTrends('source-hub-panel');
-      }
-  };
-  hotRun();
-  setInterval(hotRun, 600000);
 }
 
 // 启动（带错误边界）
