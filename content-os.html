@@ -930,17 +930,30 @@ const _toCamel2 = (row) => {
 };
 
 const SANITIZE = {
-  // 白名单与 Supabase 实际列严格一致（运行时探测结果）
   topics(obj) {
-    const allowed = ['id','title','status','created_at'];
+    const allowed = [
+      'id','title','status','created_at','updated_at',
+      'platform','theme','format','hook','goal','priority','tags',
+      'planned_date','estimated_workload','notes','core_content',
+      'source_inspiration_id','source_platform','source_url','cover_image'
+    ];
     return this._clean('topics', allowed, obj);
   },
   contents(obj) {
-    const allowed = ['id','title','body','created_at'];
+    const allowed = [
+      'id','title','body','created_at','updated_at',
+      'platform','theme','format','hook','goal','tags','rating',
+      'publish_date','publish_time','content_link','body_text',
+      'cover_image','production_cost_minutes','topic_id',
+      'source_platform','source_url','metrics','review'
+    ];
     return this._clean('contents', allowed, obj);
   },
   inspirations(obj) {
-    const allowed = ['id','title','content','created_at'];
+    const allowed = [
+      'id','title','content','created_at','updated_at',
+      'status','tags','source','description','converted_topic_id'
+    ];
     return this._clean('inspirations', allowed, obj);
   },
   users(obj) {
@@ -959,7 +972,6 @@ const SANITIZE = {
     const allowed = ['id','title','content','tags'];
     return this._clean('templates', allowed, obj);
   },
-  // 内部清洗引擎：camelCase 键 → snake_case 值，白名单过滤
   _clean(table, allowed, obj) {
     const safe = {};
     const dirty = [];
@@ -973,7 +985,6 @@ const SANITIZE = {
         dirty.push(k);
       }
     }
-    // 强制校验：必须有 id
     if(!safe.id && obj.id) safe.id = obj.id;
     if(!safe.id) console.error('❌ [SANITIZE] ' + table + ' write 缺少 id，已阻止');
     if(dirty.length) console.warn('🧹 [SANITIZE] ' + table + ' 过滤: ' + dirty.join(', '));
@@ -1156,46 +1167,35 @@ S.exportJSON = async () => {
 };
 
 // --- JSON 导入 ---
-S.importJSON = (jsonStr) => {
+S.importJSON = async (jsonStr) => {
   try {
     const data = JSON.parse(jsonStr);
-    // 基础校验
     if(!data.topics && !data.contents && !data.config) {
       throw new Error('数据格式不正确，缺少必要字段');
     }
-    // 合并导入（保留现有数据 + 导入数据并去重）
     const existingIds = new Set();
-    const collectIds = (arr) => { if(arr) arr.forEach(x=>existingIds.add(x.id)); };
     ['inspirations','topics','contents','users','knowledge','competitors','templates'].forEach(k=>{
-      if(S.db[k]) collectIds(S.db[k]);
+      if(S.db[k]) S.db[k].forEach(x => existingIds.add(x.id));
     });
-    // 导入数据（跳过已有ID）
-    const importEntity = (key) => {
-      if(!data[key]) return;
-      const newItems = data[key].filter(x=>!existingIds.has(x.id));
-      S.db[key].push(...newItems);
-    };
-    importEntity('inspirations');
-    importEntity('topics');
-    importEntity('contents');
-    importEntity('users');
-    importEntity('knowledge');
-    importEntity('competitors');
-    importEntity('templates');
-    // 配置：不覆盖，仅添加新的选项
+    for(const key of ['inspirations','topics','contents','users','knowledge','competitors','templates']) {
+      if(!data[key]) continue;
+      const newItems = data[key].filter(x => !existingIds.has(x.id));
+      for(const item of newItems) {
+        await S[key].add(item);
+      }
+    }
     if(data.config) {
       for(const ck of ['themes','formats','hooks','goals','platforms']) {
         if(data.config[ck]) {
-          const merged = [...new Set([...S.db.config[ck], ...data.config[ck]])];
-          S.db.config[ck] = merged;
+          const merged = [...new Set([...(S.db.config[ck]||[]), ...data.config[ck]])];
+          const setter = 'set' + ck.charAt(0).toUpperCase() + ck.slice(1);
+          await S.config[setter](merged);
         }
       }
     }
-    S.db.version = C.VERSION;
-    S.save();
-    return { success:true, message:'导入成功' };
+    return { success: true, message: '导入成功' };
   } catch(e) {
-    return { success:false, message:'导入失败：'+e.message };
+    return { success: false, message: '导入失败：' + e.message };
   }
 };
 
