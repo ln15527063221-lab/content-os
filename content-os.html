@@ -1070,7 +1070,7 @@ S.config = {
 };
 
 // --- 发布选题 → 内容 ---
-S.publishTopic = (topicId, publishData) => {
+S.publishTopic = async (topicId, publishData) => {
   const topic = S.topics.get(topicId);
   if(!topic) { console.warn(`🔍 [DIAG] publishTopic 未找到 topic=${topicId}`); return null; }
   console.log(`🔍 [DIAG] publishTopic: topic="${topic.title}" → content, platform=${publishData.platform} date=${publishData.publishDate}`);
@@ -1112,7 +1112,7 @@ S.publishTopic = (topicId, publishData) => {
 };
 
 // --- 灵感转为选题 ---
-S.inspirationToTopic = (inspId) => {
+S.inspirationToTopic = async (inspId) => {
   const insp = S.inspirations.get(inspId);
   if(!insp) return null;
   if(insp.status==='converted') return null; // 已转，防重复
@@ -1736,7 +1736,7 @@ P.renderInspirations = () => {
     e.stopPropagation();
     const confirmed = await UI.confirm('转为选题','将灵感转为正式选题？');
     if(confirmed) {
-      const topic = S.inspirationToTopic(b.dataset.inspToTopic);
+      const topic = await S.inspirationToTopic(b.dataset.inspToTopic);
       if(topic) {
         // 自定义 toast：带跳转链接
         const toastEl = document.createElement('div');
@@ -2029,33 +2029,7 @@ P._openLinkParseModal = async (themes, formats, hooks, goals) => {
     if(analyzeBtn) analyzeBtn.onclick = doParse;
     if(retryBtn) retryBtn.onclick = doParse;
 
-    if(saveBtn) saveBtn.onclick = () => {
-      const form = document.getElementById('link-parse-form');
-      if(!form || !parsedData) return;
-      const data = UI.readForm(form);
-      const tags = (data.tags_str||'').split(',').map(s=>s.trim()).filter(Boolean);
-      const topic = {
-        id: H.uid('top_'),
-        title: parsedData.title||'',
-        coreContent: data.coreContent||parsedData.description||'',
-        goal: data.goal||'',
-        priority: data.priority||'P2',
-        theme: data.theme||'',
-        format: data.format||'',
-        hook: '',
-        tags,
-        plannedDate: null,
-        estimatedWorkload: '1h',
-        status: 'todo',
-        notes: '',
-        coverImage: parsedData.cover||null,
-        sourcePlatform: parsedData.platform||'manual',
-        sourceUrl: data.url||'',
-        parsedMetrics: parsedData.metrics||{},
-        createdAt: H.nowISO(),
-        updatedAt: H.nowISO(),
-      };
-      await S.topics.add(topic);
+    if(saveBtn) saveBtn.onclick = async () => {
       UI.closeModal(data);
       UI.toast('✅ 选题已保存到选题库');
       P.renderTopics();
@@ -2371,7 +2345,7 @@ P._openPublishModal = async (topicId) => {
   const result = await modalPromise;
   if(!result||result==='cancel') return;
   const data = result;
-  S.publishTopic(topicId, data);
+  await S.publishTopic(topicId, data);
   UI.toast('发布成功！内容已加入内容库');
   P.renderTopics();
 };
@@ -3157,9 +3131,9 @@ P.renderCalendar = (containerId) => {
           UI.closeModal(data);
         };
       },50);
-      modalP.then(result=>{if(!result||result==='cancel')return;
+      modalP.then(async result=>{if(!result||result==='cancel')return;
         const tid=result.topicId; delete result.topicId;
-        S.publishTopic(tid,result);
+        await S.publishTopic(tid,result);
         UI.toast('发布成功！');
         P.renderCalendar(target);
       });
