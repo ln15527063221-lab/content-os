@@ -985,7 +985,7 @@ S._crud = (collection) => {
       console.log('🔍 [INSERT INPUT] ' + tbl, item);
       console.log('🔍 [INSERT CLEAN] ' + tbl, clean);
       try {
-        const res = await SUPABASE.from(tbl).insert(clean).select();
+        const res = await SUPABASE.from(tbl).upsert(clean, { onConflict: 'id' }).select();
         console.log('🔍 [INSERT RESULT] ' + tbl, res);
         const { data: returned, error } = res;
         if(error) {
