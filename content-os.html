@@ -761,8 +761,10 @@ S._migrate = () => {
   // 确保每个 content 的 metrics 有完整字段
   if(S.db.contents) S.db.contents.forEach(c=>{
     if(!c.metrics) c.metrics={};
-    const mf=['exposure','likes','comments','favorites','shares','downloads','followerGrowth','adCost','dataUpdatedAt','recordDays'];
-    mf.forEach(f=>{ if(!(f in c.metrics)) c.metrics[f]=f==='recordDays'?[]:(f==='dataUpdatedAt'?null:0); });
+    const numFields=['exposure','likes','comments','favorites','shares','downloads','followerGrowth','adCost'];
+    numFields.forEach(f=>{ c.metrics[f]=parseInt(c.metrics[f])||0; });
+    if(!('recordDays' in c.metrics)) c.metrics.recordDays=[];
+    if(!('dataUpdatedAt' in c.metrics)) c.metrics.dataUpdatedAt=null;
   });
   // 确保 review 字段
   if(S.db.contents) S.db.contents.forEach(c=>{
@@ -4365,7 +4367,8 @@ P.renderAnalytics = () => {
     html += `<button class="cos-btn cos-btn-xs ${P._analyticsSort===k?'cos-btn-primary':'cos-btn-ghost'}" data-analytics-sort="${k}">${v}</button>`;
   });
   html += '</div></div>';
-  const sorted = [...filtered].sort((a,b)=>(m(b)[P._analyticsSort]||0)-(m(a)[P._analyticsSort]||0)).filter(c=>m(c)[P._analyticsSort]>0).slice(0,10);
+  const _sv = (c) => parseInt(m(c)[P._analyticsSort]) || 0;
+  const sorted = [...filtered].sort((a,b)=>_sv(b)-_sv(a)).filter(c=>_sv(c)>0).slice(0,10);
   if(sorted.length===0) {
     html += UI.emptyState('暂无数据');
   } else {
