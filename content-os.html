@@ -103,15 +103,14 @@
   .sortable-th { cursor: pointer; user-select: none; white-space: nowrap; }
   .sortable-th:hover { color: #1e40af; }
   .sortable-th.active { color: #2563eb; }
-  .sort-icon { display: inline-flex; flex-direction: column; vertical-align: middle; margin-left: 3px; line-height: 1; gap: -1px; }
-  .sort-icon i { display: block; width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; }
-  .sort-up { border-bottom: 4px solid #cbd5e1; margin-bottom: 1px; }
-  .sort-down { border-top: 4px solid #cbd5e1; }
-  .sort-none .sort-up, .sort-none .sort-down { border-color: #cbd5e1; }
-  .sort-desc .sort-down { border-top-color: #2563eb; }
-  .sort-desc .sort-up { border-bottom-color: #cbd5e1; }
-  .sort-asc .sort-up { border-bottom-color: #2563eb; }
-  .sort-asc .sort-down { border-top-color: #cbd5e1; }
+  .sort-triangle-icon { display: inline-flex; flex-direction: column; justify-content: center; align-items: center; width: 14px; height: 16px; margin-left: 5px; vertical-align: middle; position: relative; top: 2px; }
+  .sort-triangle-icon i { display: block; width: 0; height: 0; }
+  .sort-triangle-icon .tri-up { border-left: 6px solid transparent; border-right: 6px solid transparent; border-bottom: 6px solid #cbd5e1; margin-bottom: 2px; }
+  .sort-triangle-icon .tri-down { border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 6px solid #cbd5e1; }
+  .sortable-th.sort-asc .tri-up { border-bottom-color: #2563eb; }
+  .sortable-th.sort-asc .tri-down { border-top-color: #cbd5e1; }
+  .sortable-th.sort-desc .tri-down { border-top-color: #2563eb; }
+  .sortable-th.sort-desc .tri-up { border-bottom-color: #cbd5e1; }
   .img-preview { max-width:100%; max-height:200px; border-radius:8px; border:1px solid #f1f5f9; }
 </style>
 <!-- Tailwind CDN 必须在 XLSX 之前加载，XLSX 用 defer 避免阻塞渲染 -->
@@ -2490,8 +2489,10 @@ P._contentTableSort = { key: null, dir: 'none' };
 P._renderSortTh = (label, key) => {
   const st = P._contentTableSort;
   const active = st.key === key;
-  const cls = active ? ('sortable-th active sort-' + st.dir) : 'sortable-th sort-none';
-  return `<th class="${cls}" data-content-sort="${key}"><span>${label}</span><span class="sort-icon"><i class="sort-up"></i><i class="sort-down"></i></span></th>`;
+  let cls = 'sortable-th';
+  if(active && st.dir === 'desc') cls += ' active sort-desc';
+  else if(active && st.dir === 'asc') cls += ' active sort-asc';
+  return '<th class="' + cls + '" data-content-sort="' + key + '"><span>' + label + '</span><span class="sort-triangle-icon"><i class="tri-up"></i><i class="tri-down"></i></span></th>';
 };
 
 P._applyTableSort = (filtered) => {
@@ -3990,27 +3991,56 @@ P._normalizeLink = (url) => {
 // 标题标准化
 P._normalizeTitle = (t) => {
   if(!t) return '';
-  return String(t).trim().replace(/\s+/g, ' ').replace(/[，。！？；：""''《》【】（）]/g, (m) => {
-    const map = {'，':',','。':'.','！':'!','？':'?','；':';','：':':','""':'"','''':"'",'《':'<','》':'>','【':'[','】':']','（':'(','）':')'};
-    return map[m] || m;
-  });
+  return String(t)
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/[，。！？；：《》【】（）""]/g, (m) => {
+      const map = {
+        '\uff0c': ',',
+        '\u3002': '.',
+        '\uff01': '!',
+        '\uff1f': '?',
+        '\uff1b': ';',
+        '\uff1a': ':',
+        '\u300a': '<',
+        '\u300b': '>',
+        '\u3010': '[',
+        '\u3011': ']',
+        '\uff08': '(',
+        '\uff09': ')',
+        '\u201c': '"',
+        '\u201d': '"',
+        '\u2018': "'",
+        '\u2019': "'"
+      };
+      return map[m] || m;
+    });
 };
 
-// 字段兼容映射：返回命中的列索引
+// --- 表头标准化（去BOM/空格/符号 → 纯小写用于匹配） ---
+P._normalizeHeader = (h) => {
+  return String(h || '')
+    .replace(/^\uFEFF/, '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/[：:（）()【】\[\]_\-\/\\]/g, '');
+};
+
+// 字段兼容映射：返回命中的列索引（双向 contains 匹配，标准化后比较）
 P._findCol = (header, candidates) => {
-  for(const c of candidates) {
-    const idx = header.findIndex(h => String(h||'').trim().toLowerCase() === c.toLowerCase());
-    if(idx >= 0) return idx;
+  const normH = header.map(P._normalizeHeader);
+  const normC = candidates.map(P._normalizeHeader);
+  for(let i = 0; i < normH.length; i++) {
+    const h = normH[i];
+    if(!h) continue;
+    for(const c of normC) {
+      if(h === c || h.includes(c) || c.includes(h)) return i;
+    }
   }
   return -1;
 };
-P._findColFuzzy = (header, candidates) => {
-  for(const c of candidates) {
-    const idx = header.findIndex(h => String(h||'').toLowerCase().includes(c.toLowerCase()));
-    if(idx >= 0) return idx;
-  }
-  return -1;
-};
+P._findColFuzzy = P._findCol; // 统一入口
 
 P._importXiaohongshuData = () => {
   const input = document.createElement('input');
@@ -4054,27 +4084,55 @@ P._importXiaohongshuData = () => {
 
     if(rows.length < 2) { UI.toast('文件为空或无表头','error'); return; }
 
-    const header = rows[0].map(h => String(h||'').trim());
+    const titleCandidates = ['标题','笔记标题','作品标题','内容标题','笔记名称','作品名称','内容名称','标题名称','笔记','作品','title','noteTitle','note_title','name'];
+    const linkCandidates = ['链接','笔记链接','内容链接','作品链接','笔记地址','作品地址','笔记URL','作品URL','url链接','url','link'];
+    const dateCandidates = ['发布时间','发布日期','日期','发布时刻','创建时间','笔记发布时间','作品发布时间','publishDate','publish_date','date','createdAt'];
 
-    // 字段定位
-    const colTitle = P._findColFuzzy(header, ['标题','笔记标题','作品标题','内容标题','title']);
-    const colDate = P._findColFuzzy(header, ['发布时间','发布日期','日期','publishdate','date']);
-    const colLink = P._findColFuzzy(header, ['链接','笔记链接','内容链接','作品链接','url','link']);
-    const colViews = P._findColFuzzy(header, ['观看数','播放量','浏览量','阅读量','views']);
-    const colExposure = P._findColFuzzy(header, ['曝光','曝光量','展现','展现量','exposure']);
-    const colLikes = P._findColFuzzy(header, ['点赞','点赞数','likes']);
-    const colComments = P._findColFuzzy(header, ['评论','评论数','comments']);
-    const colFavorites = P._findColFuzzy(header, ['收藏','收藏数','favorites']);
-    const colShares = P._findColFuzzy(header, ['分享','分享数','shares']);
+    // 扫描前 10 行找最像表头的那一行
+    let headerRowIdx = -1;
+    let header = [];
+    const scanRows = Math.min(rows.length, 10);
+    for(let i = 0; i < scanRows; i++) {
+      const trial = rows[i].map(h => String(h||'').trim());
+      const t = P._findCol(trial, titleCandidates);
+      const l = P._findCol(trial, linkCandidates);
+      const d = P._findCol(trial, dateCandidates);
+      const lk = P._findCol(trial, ['点赞','点赞数','likes']);
+      if(t >= 0 || l >= 0 || d >= 0 || lk >= 0) {
+        headerRowIdx = i;
+        header = trial;
+        break;
+      }
+    }
 
-    if(colTitle < 0 && colLink < 0 && colDate < 0) {
-      UI.toast('需要「标题」「链接」或「发布时间」中至少一列','error');
+    if(headerRowIdx < 0) {
+      console.log('小红书导入表头识别失败，前10行：', rows.slice(0, 10));
+      UI.toast('未识别到表头：请确认表格中包含标题、链接或发布时间列','error');
       return;
     }
 
-    // 解析数据行
+    // 字段定位
+    const colTitle = P._findCol(header, titleCandidates);
+    const colDate = P._findCol(header, dateCandidates);
+    const colLink = P._findCol(header, linkCandidates);
+    const colViews = P._findCol(header, ['观看数','播放量','浏览量','阅读量','views']);
+    const colExposure = P._findCol(header, ['曝光','曝光量','展现','展现量','exposure']);
+    const colLikes = P._findCol(header, ['点赞','点赞数','likes']);
+    const colComments = P._findCol(header, ['评论','评论数','comments']);
+    const colFavorites = P._findCol(header, ['收藏','收藏数','favorites']);
+    const colShares = P._findCol(header, ['分享','分享数','shares']);
+
+    console.log('小红书导入表头（第' + (headerRowIdx+1) + '行）：', header);
+    console.log('识别到的列：', { colTitle, colLink, colDate, colViews, colExposure, colLikes, colComments, colFavorites, colShares });
+
+    if(colTitle < 0 && colLink < 0 && colDate < 0) {
+      UI.toast('未识别到标题、链接或发布时间列','error');
+      return;
+    }
+
+    // 解析数据行（从表头下一行开始）
     const imported = [];
-    for(let i = 1; i < rows.length; i++) {
+    for(let i = headerRowIdx + 1; i < rows.length; i++) {
       const r = rows[i];
       const title = (colTitle >= 0 ? String(r[colTitle]||'').trim() : '');
       const link = (colLink >= 0 ? String(r[colLink]||'').trim() : '');
