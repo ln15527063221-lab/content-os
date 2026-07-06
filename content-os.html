@@ -327,6 +327,11 @@ H.parseDate = (v) => {
     const d = new Date(ms);
     if(!isNaN(d.getTime())) return d.toISOString().slice(0,10);
   }
+  // 小红书中文日期: "2026年07月05日19时45分02秒" → 2026-07-05
+  if(typeof v === 'string') {
+    const cnMatch = v.match(/^(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/);
+    if(cnMatch) return cnMatch[1] + '-' + cnMatch[2].padStart(2,'0') + '-' + cnMatch[3].padStart(2,'0');
+  }
   // 字符串尝试 Date 解析
   if(typeof v === 'string') {
     const parts = v.split(/[\/\-\sT]/);
@@ -4087,30 +4092,51 @@ P._importXiaohongshuData = () => {
 
     const titleCandidates = ['标题','笔记标题','作品标题','内容标题','笔记名称','作品名称','内容名称','标题名称','笔记','作品','title','noteTitle','note_title','name'];
     const linkCandidates = ['链接','笔记链接','内容链接','作品链接','笔记地址','作品地址','笔记URL','作品URL','url链接','url','link'];
-    const dateCandidates = ['发布时间','发布日期','日期','发布时刻','创建时间','笔记发布时间','作品发布时间','publishDate','publish_date','date','createdAt'];
+    const dateCandidates = ['发布时间','首次发布时间','发布日期','日期','发布时刻','创建时间','笔记发布时间','作品发布时间','publishDate','publish_date','date','createdAt'];
 
-    // 扫描前 10 行找最像表头的那一行
-    let headerRowIdx = -1;
+    // 所有数据指标候选（用于表头行命中评分）
+    const allMetricCandidates = [
+      '观看量','观看数','播放量','播放数','浏览量','浏览数','阅读量','阅读数',
+      '曝光','曝光数','曝光量','展现','展现数','展现量','展示','展示数',
+      '点赞','点赞数','点赞量','赞',
+      '评论','评论数','评论量','留言',
+      '收藏','收藏数','收藏量',
+      '分享','分享数','分享量','转发'
+    ];
+
+    // 扫描前 10 行，用命中得分找最优表头行（跳过说明行）
+    let headerRowIdx = 0; // 默认第1行
     let header = [];
+    let bestScore = 0;
     const scanRows = Math.min(rows.length, 10);
     for(let i = 0; i < scanRows; i++) {
       const trial = rows[i].map(h => String(h||'').trim());
-      const t = P._findCol(trial, titleCandidates);
-      const l = P._findCol(trial, linkCandidates);
-      const d = P._findCol(trial, dateCandidates);
-      const lk = P._findCol(trial, ['点赞','点赞数','likes']);
-      if(t >= 0 || l >= 0 || d >= 0 || lk >= 0) {
+      // 跳过空行和明显的说明行
+      const joined = trial.join('').trim();
+      if(!joined || /最多导出|排序后前\d+条|数据更新时间|导出时间|以下为/.test(joined)) continue;
+      let score = 0;
+      for(const mc of allMetricCandidates) {
+        const idx = P._findCol(trial, [mc]);
+        if(idx >= 0) score++;
+      }
+      // 标题/日期/链接 各算1分
+      if(P._findCol(trial, titleCandidates) >= 0) score++;
+      if(P._findCol(trial, dateCandidates) >= 0) score++;
+      if(P._findCol(trial, linkCandidates) >= 0) score++;
+      if(score > bestScore) {
+        bestScore = score;
         headerRowIdx = i;
         header = trial;
-        break;
       }
     }
 
-    if(headerRowIdx < 0) {
-      console.log('小红书导入表头识别失败，前10行：', rows.slice(0, 10));
-      UI.toast('未识别到表头：请确认表格中包含标题、链接或发布时间列','error');
-      return;
+    // 如果第0行得分不够，且都没找到，保留 headerRowIdx=0 兜底
+    if(bestScore < 2) {
+      header = rows[0].map(h => String(h||'').trim());
+      console.log('小红书导入表头识别得分不足，兜底使用第1行');
     }
+
+    console.log('小红书导入最终表头行：' + headerRowIdx + '（得分：' + bestScore + '）', header);
 
     // 字段定位
     const colTitle = P._findCol(header, titleCandidates);
@@ -4123,7 +4149,6 @@ P._importXiaohongshuData = () => {
     const colFavorites = P._findCol(header, ['收藏','收藏数','收藏量','收藏人数','favorites','favorite','collect','collects','collections']);
     const colShares = P._findCol(header, ['分享','分享数','分享量','转发','转发数','shares','share']);
 
-    console.log('小红书导入表头（第' + (headerRowIdx+1) + '行）：', header);
     console.log('识别到的列：', { colTitle, colLink, colDate, colViews, colExposure, colLikes, colComments, colFavorites, colShares });
 
     if(colTitle < 0 && colLink < 0 && colDate < 0) {
@@ -4187,7 +4212,7 @@ P._importXiaohongshuData = () => {
         const normTitle = P._normalizeTitle(imp.title);
         for(const c of contents) {
           if(matchedContentIds.has(c.id)) continue;
-          if(c.platform.toLowerCase().includes('小红书') || c.platform.toLowerCase().includes('xiaohongshu')) {
+          if(String(c.platform||'').toLowerCase().includes('小红书') || String(c.platform||'').toLowerCase().includes('xiaohongshu')) {
             if(P._normalizeTitle(c.title||'') === normTitle) {
               best = c; bestType = '标题+平台匹配'; break;
             }
@@ -4200,7 +4225,7 @@ P._importXiaohongshuData = () => {
         const normTitle = P._normalizeTitle(imp.title);
         for(const c of contents) {
           if(matchedContentIds.has(c.id)) continue;
-          if(c.platform.toLowerCase().includes('小红书') || c.platform.toLowerCase().includes('xiaohongshu')) {
+          if(String(c.platform||'').toLowerCase().includes('小红书') || String(c.platform||'').toLowerCase().includes('xiaohongshu')) {
             if(P._normalizeTitle(c.title||'') === normTitle && c.publishDate === imp.date) {
               best = c; bestType = '标题+日期+平台匹配'; break;
             }
