@@ -2708,7 +2708,7 @@ P.renderContents = (containerId) => {
   } else {
     html += `<div class="overflow-x-auto"><table class="cos-table">
       <thead><tr>
-        <th>封面</th><th style="min-width:220px">标题</th><th>平台</th><th>发布时间</th>${P._renderSortTh('观看数','views')}${P._renderSortTh('曝光','exposure')}${P._renderSortTh('点赞','likes')}${P._renderSortTh('评论','comments')}${P._renderSortTh('收藏','favorites')}${P._renderSortTh('分享','shares')}<th>投流</th><th>金额</th><th>操作</th>
+        <th>封面</th><th style="min-width:220px">标题</th><th>平台</th><th>发布时间</th>${P._renderSortTh('观看量','views')}${P._renderSortTh('曝光','exposure')}${P._renderSortTh('点赞','likes')}${P._renderSortTh('评论','comments')}${P._renderSortTh('收藏','favorites')}${P._renderSortTh('分享','shares')}<th>投流</th><th>金额</th><th>操作</th>
       </tr></thead><tbody>
       ${pageItems.map(c=>{
         const hasAd=(c.metrics?.adCost||0)>0;
@@ -2769,8 +2769,8 @@ P._renderFilterGroup = (label,key,options,selected) => {
 P._bindContentEvents = (platforms,themes,formats,hooks,goals) => {
   const F = P._contentFilters;
 
-  // 数据指标 行内编辑（观看数/曝光/点赞/评论/收藏/分享 通用）
-  const metricLabels = { views:'观看数', exposure:'曝光', likes:'点赞', comments:'评论', favorites:'收藏', shares:'分享' };
+  // 数据指标 行内编辑（观看量/曝光/点赞/评论/收藏/分享 通用）
+  const metricLabels = { views:'观看量', exposure:'曝光', likes:'点赞', comments:'评论', favorites:'收藏', shares:'分享' };
   document.querySelectorAll('[data-metric-edit], [data-views-edit]').forEach(el=>{
     const field = el.dataset.metricField || 'views';
     const cid = el.dataset.metricEdit || el.dataset.viewsEdit;
@@ -2959,7 +2959,7 @@ P._openContentEditModal = async (contentId) => {
         </div>
         <div class="border-t pt-3"><h3 class="text-sm font-semibold text-gray-700 mb-3">运营数据</h3></div>
         <div class="grid grid-cols-2 gap-4">
-          <div>${UI.renderField('观看数','views','number',String(c.metrics?.views||0))}</div>
+          <div>${UI.renderField('观看量','views','number',String(c.metrics?.views||0))}</div>
           <div>${UI.renderField('曝光','exposure','number',String(c.metrics?.exposure||0))}</div>
           <div>${UI.renderField('点赞','likes','number',String(c.metrics?.likes||0))}</div>
           <div>${UI.renderField('评论','comments','number',String(c.metrics?.comments||0))}</div>
@@ -4267,7 +4267,7 @@ P._importXiaohongshuData = () => {
         const imp = m.imported;
         const c = m.content;
         const diffs = [];
-        if(imp.views != null && imp.views !== (c.metrics?.views||0)) diffs.push(`观看${c.metrics?.views||0}→${imp.views}`);
+        if(imp.views != null && imp.views !== (c.metrics?.views||0)) diffs.push(`观看量${c.metrics?.views||0}→${imp.views}`);
         if(imp.exposure != null && imp.exposure !== (c.metrics?.exposure||0)) diffs.push(`曝光${c.metrics?.exposure||0}→${imp.exposure}`);
         if(imp.likes != null && imp.likes !== (c.metrics?.likes||0)) diffs.push(`点赞${c.metrics?.likes||0}→${imp.likes}`);
         if(imp.comments != null && imp.comments !== (c.metrics?.comments||0)) diffs.push(`评论${c.metrics?.comments||0}→${imp.comments}`);
