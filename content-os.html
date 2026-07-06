@@ -4986,7 +4986,7 @@ P._setHeader = (title, subtitle) => {
 <script>
 ;(function() {
 const R = window.R = {};
-const S = window.S, P = window.P, C = window.C, H = window.H, UI = window.UI;
+const S = window.S, C = window.C, H = window.H, UI = window.UI;
 
 // --- 当前路由 ---
 R.currentRoute = 'topics';
@@ -5026,6 +5026,16 @@ R._routeToNav = {
   backups:'settings', settings:'settings', data:'settings',
 };
 R.navigate = (route) => {
+  const P = window.P;
+
+  if(!P || !P.routes) {
+    console.error('❌ [ROUTER] window.P 或 P.routes 未初始化，可能 pages.js 加载失败', {
+      hasP: !!window.P,
+      hasRoutes: !!(window.P && window.P.routes)
+    });
+    return;
+  }
+
   if(!P.routes[route]) route = 'topics';
   R.currentRoute = route;
   window.location.hash = route;
