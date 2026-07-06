@@ -4116,12 +4116,12 @@ P._importXiaohongshuData = () => {
     const colTitle = P._findCol(header, titleCandidates);
     const colDate = P._findCol(header, dateCandidates);
     const colLink = P._findCol(header, linkCandidates);
-    const colViews = P._findCol(header, ['观看数','观看量','播放量','播放数','浏览量','浏览数','阅读量','阅读数','浏览次数','观看次数','views','view']);
+    const colViews = P._findCol(header, ['观看数','观看量','播放量','播放数','浏览量','浏览数','阅读量','阅读数','浏览次数','观看次数','播放次数','views','view']);
     const colExposure = P._findCol(header, ['曝光','曝光数','曝光量','展现','展现数','展现量','展示','展示数','展示量','impression','impressions','exposure']);
-    const colLikes = P._findCol(header, ['点赞','点赞数','点赞量','likes','like']);
-    const colComments = P._findCol(header, ['评论','评论数','评论量','comments','comment']);
-    const colFavorites = P._findCol(header, ['收藏','收藏数','收藏量','favorites','favorite','collect','collections']);
-    const colShares = P._findCol(header, ['分享','分享数','分享量','shares','share','转发','转发数']);
+    const colLikes = P._findCol(header, ['点赞','点赞数','点赞量','赞','赞数','likes','like']);
+    const colComments = P._findCol(header, ['评论','评论数','评论量','留言','留言数','comments','comment']);
+    const colFavorites = P._findCol(header, ['收藏','收藏数','收藏量','收藏人数','favorites','favorite','collect','collects','collections']);
+    const colShares = P._findCol(header, ['分享','分享数','分享量','转发','转发数','shares','share']);
 
     console.log('小红书导入表头（第' + (headerRowIdx+1) + '行）：', header);
     console.log('识别到的列：', { colTitle, colLink, colDate, colViews, colExposure, colLikes, colComments, colFavorites, colShares });
@@ -4130,6 +4130,9 @@ P._importXiaohongshuData = () => {
       UI.toast('未识别到标题、链接或发布时间列','error');
       return;
     }
+
+    // 打印前5个标准化表头方便调试
+    console.log('小红书导入表头标准化后（前5列）：', header.slice(0, 5).map(P._normalizeHeader));
 
     // 解析数据行（从表头下一行开始）
     const imported = [];
@@ -4156,6 +4159,8 @@ P._importXiaohongshuData = () => {
     }
 
     if(imported.length === 0) { UI.toast('未解析到有效数据行','error'); return; }
+
+    console.log('小红书导入解析结果预览：', imported.slice(0, 3));
 
     // 匹配
     const contents = S.contents.all();
