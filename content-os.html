@@ -117,6 +117,31 @@
   .sortable-th.sort-asc .tri-down { border-top-color: #cbd5e1; }
   .sortable-th.sort-desc .tri-down { border-top-color: #2563eb; }
   .sortable-th.sort-desc .tri-up { border-bottom-color: #cbd5e1; }
+
+  /* === 热点中心：适配度高亮 === */
+  .hotspot-card { position: relative; }
+  .hotspot-fit-strong {
+    border-color: #fecaca !important;
+    background: linear-gradient(180deg, #fff7f7 0%, #ffffff 52%);
+    box-shadow: 0 8px 24px rgba(239, 68, 68, 0.10);
+  }
+  .hotspot-fit-good {
+    border-color: #bbf7d0 !important;
+    background: linear-gradient(180deg, #f0fdf4 0%, #ffffff 52%);
+    box-shadow: 0 8px 22px rgba(34, 197, 94, 0.10);
+  }
+  .hotspot-fit-strong::before,
+  .hotspot-fit-good::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    border-radius: 10px 10px 0 0;
+  }
+  .hotspot-fit-strong::before { background: #ef4444; }
+  .hotspot-fit-good::before { background: #22c55e; }
   .img-preview { max-width:100%; max-height:200px; border-radius:8px; border:1px solid #f1f5f9; }
 </style>
 <!-- Tailwind CDN 必须在 XLSX 之前加载，XLSX 用 defer 避免阻塞渲染 -->
@@ -233,10 +258,11 @@ C.NAV_GROUPS = [
   {
     label:'内容运营',
     items: [
+      { id:'hotspots',     icon:'🔥', label:'热点中心',   route:'hotspots' },
       { id:'inspirations', icon:'💡', label:'灵感池',     route:'inspirations' },
       { id:'topics',       icon:'📋', label:'选题库',     route:'topics' },
-      { id:'contents',     icon:'📝', label:'内容库',     route:'contents' },
       { id:'calendar',     icon:'📅', label:'内容日历',   route:'calendar' },
+      { id:'contents',     icon:'📝', label:'内容库',     route:'contents' },
     ]
   },
   {
@@ -1686,6 +1712,675 @@ P._inspCard = (insp) => `
     <div class="mt-2 text-xs text-gray-400">${H.fmtDate(insp.createdAt)}</div>
   </div>`;
 
+// ==================== 热点中心 ====================
+
+P._HOTSPOT_STORAGE_KEY = 'content_os_hotspots_v1';
+P._HOTSPOT_CONFIG_KEY = 'content_os_hotspot_api_config';
+P._hotspotFilter = 'all';
+P._hotspotPlatform = 'all';
+P._hotspotSearch = '';
+
+P._hotspotLoad = () => {
+  try { return JSON.parse(localStorage.getItem(P._HOTSPOT_STORAGE_KEY) || '[]'); }
+  catch(e) { console.warn('热点数据读取失败', e); return []; }
+};
+
+P._hotspotSave = (items) => {
+  try { localStorage.setItem(P._HOTSPOT_STORAGE_KEY, JSON.stringify(items || [])); }
+  catch(e) { UI.toast('热点保存失败：' + e.message, 'error'); }
+};
+
+P._hotspotGetConfig = () => {
+  try { return JSON.parse(localStorage.getItem(P._HOTSPOT_CONFIG_KEY) || '{}'); }
+  catch(e) { return {}; }
+};
+
+P._hotspotSaveConfig = (cfg) => {
+  localStorage.setItem(P._HOTSPOT_CONFIG_KEY, JSON.stringify(cfg || {}));
+};
+
+P._hotspotNormText = (v) => String(v || '').trim().replace(/\s+/g, ' ');
+P._hotspotNormKey = (v) => String(v || '').trim().toLowerCase().replace(/[\s#＃，。！？、:：；;《》“”"'‘’（）()【】\[\]\-_/\\]/g, '');
+
+P._hotspotExtractNumber = (v) => {
+  if(v == null || v === '') return '';
+  if(typeof v === 'number' && !isNaN(v)) return v;
+  const s = String(v).replace(/,/g, '').trim();
+  const m = s.match(/([0-9]+(?:\.[0-9]+)?)/);
+  if(!m) return s;
+  let n = parseFloat(m[1]);
+  if(/[万wW]/.test(s)) n *= 10000;
+  if(/[亿]/.test(s)) n *= 100000000;
+  return Math.round(n);
+};
+
+P._hotspotFit = (keyword, title, category) => {
+  const text = `${keyword || ''} ${title || ''} ${category || ''}`;
+  const strong = ['旅行','旅游','自驾','出行','城市','路线','攻略','避暑','暑期','周末','县城','小城','海边','草原','露营','民宿','酒店','亲子','情侣','毕业旅行','打卡','景点','山海','公路'];
+  const medium = ['电影','电视剧','综艺','音乐','演唱会','假期','情绪','松弛感','生活方式','美食','咖啡','夜市','拍照','夏天','秋天','春节','国庆','五一'];
+  let score = 35;
+  strong.forEach(k => { if(text.includes(k)) score += 9; });
+  medium.forEach(k => { if(text.includes(k)) score += 4; });
+  score = Math.max(20, Math.min(98, score));
+  const level = score >= 75 ? '高' : score >= 55 ? '中' : '低';
+  let angle = `把「${keyword || title || '这个热点'}」转成自驾游内容：用城市路线、旅行情绪、出行痛点或目的地清单切入。`;
+  if(/[旅自驾出行城市路线攻略]/.test(text)) angle = `适合直接做「${keyword || title} + 自驾路线/城市打卡/旅行攻略」内容。`;
+  else if(/[影视剧综音乐演唱会]/.test(text)) angle = `适合做「跟着热点去旅行」：关联取景地、城市打卡、同款路线。`;
+  else if(/[情绪松弛生活方式]/.test(text)) angle = `适合做情绪型旅行内容：把热点情绪转成“周末逃离城市/慢旅行/自驾治愈路线”。`;
+  else if(/[美食咖啡夜市]/.test(text)) angle = `适合做城市漫游内容：小吃街、夜市、咖啡店、城市一日自驾路线。`;
+  return { score, level, angle };
+};
+
+P._normalizeHotspotItem = (raw, platform, idx=0) => {
+  raw = raw || {};
+  const keyword = P._hotspotNormText(
+    raw.keyword || raw.word || raw.hotword || raw.hot_word || raw.name || raw.title || raw.sentence || raw.query || raw.topic || raw.desc || raw.label
+  );
+  const title = P._hotspotNormText(raw.title || raw.name || raw.word || raw.keyword || raw.sentence || keyword);
+  if(!keyword && !title) return null;
+  const category = P._hotspotNormText(raw.category || raw.type || raw.tag || raw.group || raw.classify || '');
+  const fit = P._hotspotFit(keyword || title, title, category);
+  const participants = P._hotspotExtractNumber(raw.participants || raw.participant || raw.joinCount || raw.join_count || raw.people || raw.users || '');
+  const views = P._hotspotExtractNumber(raw.views || raw.viewCount || raw.view_count || raw.browse || raw.browser || raw.read || raw.readCount || raw.read_count || '');
+  const heat = P._hotspotExtractNumber(raw.heat || raw.hot || raw.hotValue || raw.hot_value || raw.score || raw.value || raw.num || raw.count || views || participants);
+  return {
+    id: H.uid('hot_'),
+    platform: platform || P._hotspotNormText(raw.platform || raw.source || '未知'),
+    keyword: keyword || title,
+    title: title || keyword,
+    rank: raw.rank || raw.index || raw.order || raw.position || raw.no || (idx + 1),
+    participants,
+    views,
+    heat,
+    heatText: P._hotspotNormText(raw.heatText || raw.heat_text || raw.desc || raw.description || ''),
+    category,
+    sourceUrl: P._hotspotNormText(raw.url || raw.link || raw.shareUrl || raw.share_url || raw.href || raw.uri || ''),
+    fitScore: fit.score,
+    fitLevel: fit.level,
+    angle: P._hotspotNormText(raw.angle || raw.reason || raw.note || fit.angle),
+    status: 'candidate',
+    source: raw._source || 'api',
+    raw,
+    fetchedAt: H.nowISO(),
+    createdAt: H.nowISO(),
+    updatedAt: H.nowISO()
+  };
+};
+
+P._extractHotspotList = (json) => {
+  if(Array.isArray(json)) return json;
+  if(!json || typeof json !== 'object') return [];
+  const keys = ['data','list','items','result','results','hot_list','hotList','trending','words','rankings','rankList'];
+  for(const k of keys) {
+    const v = json[k];
+    if(Array.isArray(v)) return v;
+    if(v && typeof v === 'object') {
+      const nested = P._extractHotspotList(v);
+      if(nested.length) return nested;
+    }
+  }
+  return [];
+};
+
+P._mergeHotspots = (newItems) => {
+  const oldItems = P._hotspotLoad();
+  const byKey = new Map();
+  oldItems.forEach(item => byKey.set(`${item.platform}|${P._hotspotNormKey(item.keyword || item.title)}`, item));
+  let added = 0, updated = 0;
+  newItems.forEach(item => {
+    const key = `${item.platform}|${P._hotspotNormKey(item.keyword || item.title)}`;
+    const old = byKey.get(key);
+    if(old) {
+      byKey.set(key, { ...old, ...item, id: old.id, status: old.status || item.status, createdAt: old.createdAt || item.createdAt, updatedAt: H.nowISO() });
+      updated++;
+    } else {
+      byKey.set(key, item);
+      added++;
+    }
+  });
+  const merged = Array.from(byKey.values()).sort((a,b)=>(b.fetchedAt||b.createdAt||'').localeCompare(a.fetchedAt||a.createdAt||''));
+  P._hotspotSave(merged);
+  return { added, updated, total: merged.length };
+};
+
+P._hotspotStatusLabel = (s) => ({candidate:'待判断', saved_inspiration:'已存灵感', saved_topic:'已生成选题', ignored:'已忽略'}[s] || s || '待判断');
+P._hotspotFitClass = (level) => level === '高' ? 'bg-red-50 text-red-600 border-red-100' : level === '中' ? 'bg-amber-50 text-amber-600 border-amber-100' : 'bg-gray-50 text-gray-500 border-gray-100';
+P._hotspotFitBadgeClass = (score, level) => {
+  score = Number(score) || 0;
+  if(score >= 75) return 'bg-red-50 text-red-600 border-red-200 ring-1 ring-red-100 font-semibold';
+  if(score >= 60) return 'bg-emerald-50 text-emerald-700 border-emerald-200 ring-1 ring-emerald-100 font-semibold';
+  if(score >= 55 || level === '中') return 'bg-amber-50 text-amber-700 border-amber-100';
+  return 'bg-gray-50 text-gray-500 border-gray-100';
+};
+P._hotspotFitLabel = (score, level) => {
+  score = Number(score) || 0;
+  if(score >= 75) return '🔥 高适配 · ' + score;
+  if(score >= 60) return '⭐ 值得跟进 · ' + score;
+  return '适配' + (level || '低') + ' · ' + score;
+};
+P._hotspotCardClass = (score) => {
+  score = Number(score) || 0;
+  if(score >= 75) return 'hotspot-fit-strong';
+  if(score >= 60) return 'hotspot-fit-good';
+  return '';
+};
+
+P.renderHotspots = () => {
+  const all = P._hotspotLoad();
+  const cfg = P._hotspotGetConfig();
+  let items = all;
+  if(P._hotspotPlatform !== 'all') items = items.filter(x => x.platform === P._hotspotPlatform);
+  if(P._hotspotFilter !== 'all') items = items.filter(x => (x.status || 'candidate') === P._hotspotFilter);
+  if(P._hotspotSearch) {
+    const q = P._hotspotSearch.toLowerCase();
+    items = items.filter(x => JSON.stringify(x).toLowerCase().includes(q));
+  }
+  items = items.sort((a,b) => {
+    const s = (b.fitScore || 0) - (a.fitScore || 0);
+    if(s !== 0) return s;
+    return String(a.rank || '').localeCompare(String(b.rank || ''), 'zh-CN', {numeric:true});
+  });
+
+  const stats = {
+    total: all.length,
+    candidate: all.filter(x => (x.status || 'candidate') === 'candidate').length,
+    high: all.filter(x => (Number(x.fitScore)||0) >= 60).length,
+    saved: all.filter(x => ['saved_inspiration','saved_topic'].includes(x.status)).length,
+  };
+
+  const actionsEl = document.getElementById('page-actions');
+  if(actionsEl) actionsEl.innerHTML = `
+    <button class="cos-btn cos-btn-primary cos-btn-sm" id="btn-hotspot-paste">📋 粘贴导入热点</button>
+    <button class="cos-btn cos-btn-secondary cos-btn-sm" id="btn-hotspot-manual">➕ 手动新增</button>
+    <button class="cos-btn cos-btn-secondary cos-btn-sm" id="btn-hotspot-import">📥 Excel/CSV导入</button>`;
+
+  let html = `<div class="space-y-4">
+    <div class="grid grid-cols-4 gap-3">
+      <div class="cos-card p-3"><div class="text-xs text-gray-500">热点总数</div><div class="text-lg font-semibold text-gray-900">${stats.total}</div></div>
+      <div class="cos-card p-3"><div class="text-xs text-gray-500">待判断</div><div class="text-lg font-semibold text-brand-600">${stats.candidate}</div></div>
+      <div class="cos-card p-3"><div class="text-xs text-gray-500">值得跟进</div><div class="text-lg font-semibold text-emerald-600">${stats.high}</div></div>
+      <div class="cos-card p-3"><div class="text-xs text-gray-500">已转化</div><div class="text-lg font-semibold text-emerald-600">${stats.saved}</div></div>
+    </div>
+
+    <div class="flex flex-wrap items-center gap-2">
+      <div class="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5">
+        ${['all','抖音','小红书'].map(p=>`<button class="px-3 py-1 rounded-md text-xs font-medium ${P._hotspotPlatform===p?'bg-white shadow-sm text-gray-900':'text-gray-500 hover:text-gray-700'}" data-hot-platform="${p}">${p==='all'?'全部平台':p}</button>`).join('')}
+      </div>
+      <div class="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5">
+        ${[{k:'all',l:'全部'},{k:'candidate',l:'待判断'},{k:'saved_inspiration',l:'已存灵感'},{k:'saved_topic',l:'已生成选题'},{k:'ignored',l:'已忽略'}].map(f=>`<button class="px-3 py-1 rounded-md text-xs font-medium ${P._hotspotFilter===f.k?'bg-white shadow-sm text-gray-900':'text-gray-500 hover:text-gray-700'}" data-hot-filter="${f.k}">${f.l}</button>`).join('')}
+      </div>
+      <input class="cos-input max-w-xs ml-auto" id="hotspot-search" placeholder="搜索热点、分类、角度" value="${H.esc(P._hotspotSearch || '')}">
+    </div>`;
+
+  if(items.length === 0) {
+    html += UI.emptyState('还没有热点数据，先粘贴导入一批小红书/抖音热点吧', '<button class="cos-btn cos-btn-primary cos-btn-sm" id="empty-hotspot-paste">粘贴导入热点</button>');
+  } else {
+    html += `<div class="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-3">`;
+    items.forEach(h => {
+      html += `<div class="cos-card hotspot-card ${P._hotspotCardClass(h.fitScore)} p-4 h-full flex flex-col">
+        <div class="min-w-0 flex-1">
+          <div class="flex flex-wrap items-center gap-2 mb-1.5">
+            <span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">${H.esc(h.platform || '-')}</span>
+            ${h.rank ? `<span class="text-xs text-gray-400">#${H.esc(h.rank)}</span>` : ''}
+            ${h.participants ? `<span class="text-xs text-gray-400">参与 ${P._hotspotFormatNumberText(Number(h.participants)||h.participants)}</span>` : ''}
+            ${h.views ? `<span class="text-xs text-gray-400">浏览 ${P._hotspotFormatNumberText(Number(h.views)||h.views)}</span>` : (h.heat ? `<span class="text-xs text-gray-400">热度 ${P._hotspotFormatNumberText(Number(h.heat)||h.heat)}</span>` : '')}
+            <span class="text-xs px-2 py-0.5 rounded-full border ${P._hotspotFitBadgeClass(h.fitScore, h.fitLevel)}">${H.esc(P._hotspotFitLabel(h.fitScore, h.fitLevel))}</span>
+            <span class="text-xs text-gray-400">${P._hotspotStatusLabel(h.status)}</span>
+          </div>
+          <div class="text-sm font-semibold text-gray-900 mb-1 line-clamp-2">${H.esc(h.keyword || h.title)}</div>
+          ${h.title && h.title !== h.keyword ? `<div class="text-xs text-gray-500 mb-1 line-clamp-2">${H.esc(h.title)}</div>` : ''}
+          ${h.heatText ? `<div class="text-xs text-gray-400 mb-1">${H.esc(h.heatText)}</div>` : ''}
+          <div class="text-xs text-gray-600 leading-5 line-clamp-2">${H.esc(h.angle || '')}</div>
+          <div class="flex flex-wrap items-center gap-1 mt-2">
+            ${h.category ? `<span class="cos-tag text-xs">${H.esc(h.category)}</span>` : ''}
+            <span class="cos-tag text-xs">热点</span>
+            <span class="text-xs text-gray-400 ml-auto">${H.fmtDateTime(h.fetchedAt || h.createdAt)}</span>
+          </div>
+        </div>
+        <div class="flex flex-wrap items-center gap-1.5 pt-3 mt-3 border-t border-gray-100">
+          <button class="cos-btn cos-btn-primary cos-btn-xs" data-hot-to-insp="${h.id}">存为灵感</button>
+          <button class="cos-btn cos-btn-secondary cos-btn-xs" data-hot-to-topic="${h.id}">生成选题</button>
+          ${h.sourceUrl ? `<a class="cos-btn cos-btn-ghost cos-btn-xs" href="${H.esc(h.sourceUrl)}" target="_blank">打开来源</a>` : ''}
+          <button class="cos-btn cos-btn-ghost cos-btn-xs" data-hot-ignore="${h.id}">忽略</button>
+          <button class="cos-btn cos-btn-ghost cos-btn-xs text-red-500" data-hot-delete="${h.id}">删除</button>
+        </div>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+  html += `</div>`;
+  document.getElementById('page-body').innerHTML = html;
+
+  document.getElementById('btn-hotspot-paste')?.addEventListener('click', () => P._openHotspotPasteModal());
+  document.getElementById('empty-hotspot-paste')?.addEventListener('click', () => P._openHotspotPasteModal());
+  document.getElementById('btn-hotspot-manual')?.addEventListener('click', () => P._openHotspotManualModal());
+  document.getElementById('btn-hotspot-import')?.addEventListener('click', () => P._importHotspotFile());
+  document.querySelectorAll('[data-hot-platform]').forEach(btn => btn.onclick = () => { P._hotspotPlatform = btn.dataset.hotPlatform; P.renderHotspots(); });
+  document.querySelectorAll('[data-hot-filter]').forEach(btn => btn.onclick = () => { P._hotspotFilter = btn.dataset.hotFilter; P.renderHotspots(); });
+  const searchEl = document.getElementById('hotspot-search');
+  if(searchEl) searchEl.oninput = () => { P._hotspotSearch = searchEl.value.trim(); clearTimeout(P._hotspotSearchTimer); P._hotspotSearchTimer = setTimeout(()=>P.renderHotspots(), 250); };
+  document.querySelectorAll('[data-hot-to-insp]').forEach(btn => btn.onclick = () => P._hotspotToInspiration(btn.dataset.hotToInsp));
+  document.querySelectorAll('[data-hot-to-topic]').forEach(btn => btn.onclick = () => P._hotspotToTopic(btn.dataset.hotToTopic));
+  document.querySelectorAll('[data-hot-ignore]').forEach(btn => btn.onclick = () => P._hotspotUpdateStatus(btn.dataset.hotIgnore, 'ignored'));
+  document.querySelectorAll('[data-hot-delete]').forEach(btn => btn.onclick = async () => {
+    const ok = await UI.confirm('删除热点', '确定删除这条热点记录？', {danger:true, confirmText:'删除'});
+    if(ok) { P._hotspotSave(P._hotspotLoad().filter(x => x.id !== btn.dataset.hotDelete)); P.renderHotspots(); }
+  });
+};
+
+
+P._hotspotFormatNumberText = (n) => {
+  if(n === '' || n == null) return '';
+  const num = Number(n);
+  if(isNaN(num)) return String(n || '');
+  if(num >= 100000000) return (num / 100000000).toFixed(num % 100000000 === 0 ? 0 : 1).replace(/\.0$/, '') + '亿';
+  if(num >= 10000) return (num / 10000).toFixed(num % 10000 === 0 ? 0 : 1).replace(/\.0$/, '') + '万';
+  return String(num);
+};
+
+P._parseHotspotMetricLine = (line) => {
+  const text = String(line || '').replace(/,/g,'').trim();
+  const joinMatch = text.match(/([0-9]+(?:\.[0-9]+)?\s*[万亿wW]?)\s*人参与/);
+  const viewMatch = text.match(/([0-9]+(?:\.[0-9]+)?\s*[万亿wW]?)\s*次浏览/);
+  return {
+    participants: joinMatch ? P._hotspotExtractNumber(joinMatch[1]) : '',
+    views: viewMatch ? P._hotspotExtractNumber(viewMatch[1]) : '',
+    heatText: (joinMatch || viewMatch) ? text : ''
+  };
+};
+
+P._stripHotspotMetrics = (line) => {
+  return String(line || '')
+    .replace(/([0-9]+(?:\.[0-9]+)?\s*[万亿wW]?)\s*人参与/g, '')
+    .replace(/([0-9]+(?:\.[0-9]+)?\s*[万亿wW]?)\s*次浏览/g, '')
+    .replace(/[·•|｜]+/g, ' ')
+    .replace(/^\s*[#＃]\s*/, '')
+    .trim();
+};
+
+P._parseHotspotPasteText = (text, defaults={}) => {
+  const lines = String(text || '')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map(x => x.trim())
+    .filter(Boolean);
+  const items = [];
+  const used = new Set();
+  const isMetric = (line) => /人参与|次浏览|浏览量|参与/.test(line) && /[0-9]/.test(line);
+  for(let i=0; i<lines.length; i++) {
+    if(used.has(i)) continue;
+    const line = lines[i];
+    let keyword = '';
+    let metric = P._parseHotspotMetricLine(line);
+
+    if(/^#|^＃/.test(line)) {
+      keyword = P._stripHotspotMetrics(line);
+    } else if(!isMetric(line)) {
+      keyword = P._stripHotspotMetrics(line);
+    }
+
+    if(!keyword || keyword.length > 60) continue;
+    if((!metric.participants && !metric.views) && lines[i+1] && isMetric(lines[i+1])) {
+      metric = P._parseHotspotMetricLine(lines[i+1]);
+      used.add(i+1);
+    }
+    used.add(i);
+    const heatText = metric.heatText || [
+      metric.participants ? P._hotspotFormatNumberText(metric.participants) + '人参与' : '',
+      metric.views ? P._hotspotFormatNumberText(metric.views) + '次浏览' : ''
+    ].filter(Boolean).join(' · ');
+    const raw = {
+      platform: defaults.platform || '小红书',
+      keyword,
+      title: keyword,
+      rank: items.length + 1,
+      participants: metric.participants,
+      views: metric.views,
+      heatText,
+      category: defaults.category || '出行',
+      _source: defaults.source || '小红书笔记灵感'
+    };
+    const item = P._normalizeHotspotItem(raw, raw.platform, items.length);
+    if(item) items.push(item);
+  }
+  const seen = new Set();
+  return items.filter(item => {
+    const key = `${item.platform}|${P._hotspotNormKey(item.keyword)}`;
+    if(seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+P._openHotspotImportPreview = async (items, title='确认导入热点') => {
+  if(!items || !items.length) { UI.toast('没有识别到热点，请检查粘贴内容', 'error'); return false; }
+  const rows = items.slice(0, 60).map((h,i)=>`<tr>
+    <td class="px-3 py-2 text-gray-400">${i+1}</td>
+    <td class="px-3 py-2 font-medium text-gray-900">${H.esc(h.keyword || '')}</td>
+    <td class="px-3 py-2">${H.esc(h.platform || '')}</td>
+    <td class="px-3 py-2">${H.esc(h.category || '')}</td>
+    <td class="px-3 py-2">${h.participants ? H.fmtNum(Number(h.participants)||h.participants) : '-'}</td>
+    <td class="px-3 py-2">${h.views ? H.fmtNum(Number(h.views)||h.views) : '-'}</td>
+    <td class="px-3 py-2"><span class="text-xs px-2 py-0.5 rounded-full border ${P._hotspotFitBadgeClass(h.fitScore, h.fitLevel)}">${H.esc(P._hotspotFitLabel(h.fitScore, h.fitLevel))}</span></td>
+  </tr>`).join('');
+  const html = `<div class="p-6">
+    <h2 class="text-lg font-semibold text-gray-900 mb-1">${H.esc(title)}</h2>
+    <p class="text-sm text-gray-500 mb-4">共识别 ${items.length} 条热点。确认后会保存到热点中心，不会直接生成灵感或选题。</p>
+    <div class="max-h-[46vh] overflow-auto border border-gray-100 rounded-lg">
+      <table class="cos-table">
+        <thead><tr><th>#</th><th>热点词</th><th>平台</th><th>分类</th><th>参与人数</th><th>浏览量</th><th>适配度</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    ${items.length > 60 ? `<div class="text-xs text-gray-400 mt-2">只预览前 60 条，确认后会导入全部 ${items.length} 条。</div>` : ''}
+    <div class="flex justify-end gap-3 pt-5">
+      <button type="button" class="cos-btn cos-btn-secondary" data-modal-action="cancel">取消</button>
+      <button type="button" class="cos-btn cos-btn-primary" data-modal-action="confirm">确认导入</button>
+    </div>
+  </div>`;
+  const ok = await UI.openModal(html, {width:'max-w-5xl'});
+  return ok === 'confirm';
+};
+
+P._openHotspotPasteModal = async () => {
+  const sample = `# 拍拍家乡风景\n23.5万人参与 · 3.7亿次浏览\n\n# 夜宵好去处\n63.9万人参与 · 14.2亿次浏览\n\n# 苏州旅行\n32万人参与 · 14.9亿次浏览\n\n# 小众旅行地\n317.5万人参与 · 143.2亿次浏览`;
+  const html = `<div class="p-6">
+    <h2 class="text-lg font-semibold text-gray-900 mb-1">粘贴导入热点</h2>
+    <p class="text-sm text-gray-500 mb-5">适合小红书创作服务平台「笔记灵感」页面。复制话题名和热度文字，粘贴到这里，系统会自动解析。</p>
+    <form id="hotspot-paste-form" class="space-y-4">
+      <div class="grid grid-cols-3 gap-3">
+        <div>${UI.renderField('平台','platform','select','小红书',['小红书','抖音','微博','手动'])}</div>
+        <div>${UI.renderField('分类','category','text','出行',null,'出行 / 美食 / 情绪')}</div>
+        <div>${UI.renderField('来源','source','text','小红书笔记灵感',null,'小红书笔记灵感')}</div>
+      </div>
+      <div>
+        <label class="cos-label">粘贴内容</label>
+        <textarea name="text" class="cos-textarea" style="min-height:220px" placeholder="${H.esc(sample)}"></textarea>
+      </div>
+      <div class="text-xs text-gray-400 leading-5">支持格式：# 话题名 + 下一行“xx万人参与 · xx亿次浏览”；也支持把话题名和热度放在同一行。</div>
+      <div class="flex justify-end gap-3 pt-2">
+        <button type="button" class="cos-btn cos-btn-secondary" data-modal-action="cancel">取消</button>
+        <button type="button" class="cos-btn cos-btn-primary" id="hotspot-paste-preview">识别并预览</button>
+      </div>
+    </form>
+  </div>`;
+  const p = UI.openModal(html, {width:'max-w-3xl'});
+  setTimeout(()=>{
+    const btn = document.getElementById('hotspot-paste-preview');
+    if(btn) btn.onclick = () => {
+      const form = document.getElementById('hotspot-paste-form');
+      UI.closeModal(UI.readForm(form));
+    };
+  }, 50);
+  const data = await p;
+  if(!data || data === 'cancel') return;
+  const items = P._parseHotspotPasteText(data.text || '', { platform:data.platform || '小红书', category:data.category || '出行', source:data.source || '小红书笔记灵感' });
+  const ok = await P._openHotspotImportPreview(items, '确认导入粘贴热点');
+  if(!ok) return;
+  const result = P._mergeHotspots(items);
+  UI.toast(`热点导入完成：新增 ${result.added} 条，更新 ${result.updated} 条`);
+  P.renderHotspots();
+};
+
+P._openHotspotManualModal = async () => {
+  const html = `<div class="p-6">
+    <h2 class="text-lg font-semibold text-gray-900 mb-5">手动新增热点</h2>
+    <form id="hotspot-manual-form" class="space-y-4">
+      <div class="grid grid-cols-2 gap-3">
+        <div>${UI.renderField('平台','platform','select','小红书',['小红书','抖音','微博','手动'])}</div>
+        <div>${UI.renderField('分类','category','text','出行')}</div>
+      </div>
+      <div>${UI.renderField('热点词','keyword','text','',null,'例如：拍拍家乡风景')}</div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>${UI.renderField('参与人数','participants','text','',null,'例如：23.5万')}</div>
+        <div>${UI.renderField('浏览量','views','text','',null,'例如：3.7亿')}</div>
+      </div>
+      <div>${UI.renderField('来源链接（可选）','sourceUrl','url','')}</div>
+      <div>${UI.renderField('旅行关联角度（可选）','angle','textarea','',null,'不填则自动生成')}</div>
+      <div class="flex justify-end gap-3 pt-2">
+        <button type="button" class="cos-btn cos-btn-secondary" data-modal-action="cancel">取消</button>
+        <button type="button" class="cos-btn cos-btn-primary" id="hotspot-manual-save">保存热点</button>
+      </div>
+    </form>
+  </div>`;
+  const p = UI.openModal(html, {width:'max-w-2xl'});
+  setTimeout(()=>{
+    const btn = document.getElementById('hotspot-manual-save');
+    if(btn) btn.onclick = () => UI.closeModal(UI.readForm(document.getElementById('hotspot-manual-form')));
+  }, 50);
+  const data = await p;
+  if(!data || data === 'cancel') return;
+  if(!String(data.keyword || '').trim()) { UI.toast('请填写热点词', 'error'); return; }
+  const item = P._normalizeHotspotItem({
+    platform: data.platform || '小红书',
+    keyword: data.keyword,
+    title: data.keyword,
+    participants: data.participants,
+    views: data.views,
+    heatText: [data.participants ? data.participants + '人参与' : '', data.views ? data.views + '次浏览' : ''].filter(Boolean).join(' · '),
+    category: data.category || '出行',
+    url: data.sourceUrl || '',
+    angle: data.angle || '',
+    _source: 'manual'
+  }, data.platform || '小红书', 0);
+  const result = P._mergeHotspots([item].filter(Boolean));
+  UI.toast(`热点已保存：新增 ${result.added} 条，更新 ${result.updated} 条`);
+  P.renderHotspots();
+};
+
+P._setHotspotButtonLoading = (btn, busy, text) => {
+  if(!btn) return;
+  if(!btn.dataset.originalText) btn.dataset.originalText = btn.innerHTML;
+  btn.disabled = !!busy;
+  if(busy) {
+    btn.classList.add('opacity-70','cursor-not-allowed');
+    btn.innerHTML = `<span class="cos-spinner" style="width:14px;height:14px;border-width:2px"></span>${H.esc(text || '抓取中...')}`;
+  } else {
+    btn.classList.remove('opacity-70','cursor-not-allowed');
+    btn.innerHTML = btn.dataset.originalText;
+  }
+};
+
+P._fetchHotspots = async (platform, btn) => {
+  const cfg = P._hotspotGetConfig();
+  const url = platform === '抖音' ? cfg.douyinUrl : cfg.xhsUrl;
+  if(!url) {
+    UI.toast(`请先配置${platform}热点接口`, 'error');
+    await P._openHotspotConfigModal(platform);
+    return;
+  }
+  P._setHotspotButtonLoading(btn, true, '抓取中...');
+  P._openXhsLoadingModal(`正在抓取${platform}热点`, '正在请求热点接口，请稍候...');
+  try {
+    const headers = { 'Accept': 'application/json' };
+    if(cfg.token) headers['Authorization'] = cfg.token.startsWith('Bearer ') ? cfg.token : 'Bearer ' + cfg.token;
+    const resp = await fetch(url, { method:'GET', headers });
+    if(!resp.ok) throw new Error('HTTP ' + resp.status);
+    const json = await resp.json();
+    const list = P._extractHotspotList(json);
+    const normalized = list.map((x,i)=>P._normalizeHotspotItem(x, platform, i)).filter(Boolean);
+    if(!normalized.length) throw new Error('接口返回中没有识别到热点列表');
+    const result = P._mergeHotspots(normalized);
+    P._closeXhsLoadingModal();
+    UI.toast(`${platform}热点抓取完成：新增 ${result.added} 条，更新 ${result.updated} 条`);
+    P.renderHotspots();
+  } catch(e) {
+    P._closeXhsLoadingModal();
+    console.error(`${platform}热点抓取失败`, e);
+    UI.toast(`${platform}热点抓取失败：${e.message}`, 'error');
+  } finally {
+    P._setHotspotButtonLoading(btn, false);
+  }
+};
+
+P._openHotspotConfigModal = async () => {
+  const cfg = P._hotspotGetConfig();
+  const html = `<div class="p-6">
+    <h2>热点接口配置</h2>
+    <form id="hotspot-config-form" class="space-y-4">
+      <div class="text-sm text-gray-600 leading-6 bg-blue-50 border border-blue-100 rounded-lg p-3">
+        请填写你自己的服务端中转接口地址。接口返回可以是数组，也可以是 {data:[...]} / {list:[...]} / {result:{list:[...]}}。不要把官方平台密钥直接写在前端。
+      </div>
+      <div>${UI.renderField('抖音热点接口 URL','douyinUrl','url',cfg.douyinUrl || '',null,'https://你的域名/api/douyin-hot')}</div>
+      <div>${UI.renderField('小红书热点接口 URL','xhsUrl','url',cfg.xhsUrl || '',null,'https://你的域名/api/xhs-hot')}</div>
+      <div>${UI.renderField('请求 Token（可选，仅用于你的中转接口）','token','text',cfg.token || '',null,'Bearer token / 留空')}</div>
+      <div class="text-xs text-gray-400 leading-5">建议用 Supabase Edge Function / Vercel API 做中转：服务端保存官方或第三方 API Key，前端只请求你的中转地址。</div>
+      <div class="flex justify-end gap-3 pt-2">
+        <button type="button" class="cos-btn cos-btn-secondary" data-modal-action="cancel">取消</button>
+        <button type="button" class="cos-btn cos-btn-primary" id="hotspot-config-save">保存配置</button>
+      </div>
+    </form>
+  </div>`;
+  const p = UI.openModal(html, {width:'max-w-2xl'});
+  setTimeout(()=>{
+    const btn = document.getElementById('hotspot-config-save');
+    if(btn) btn.onclick = () => {
+      const form = document.getElementById('hotspot-config-form');
+      UI.closeModal(UI.readForm(form));
+    };
+  }, 50);
+  const result = await p;
+  if(!result || result === 'cancel') return;
+  P._hotspotSaveConfig({
+    douyinUrl: (result.douyinUrl || '').trim(),
+    xhsUrl: (result.xhsUrl || '').trim(),
+    token: (result.token || '').trim()
+  });
+  UI.toast('热点接口配置已保存');
+  P.renderHotspots();
+};
+
+P._importHotspotFile = () => {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.xlsx,.xls,.csv';
+  input.onchange = async (e) => {
+    const file = e.target.files[0];
+    if(!file) return;
+    P._openXhsLoadingModal('正在导入热点文件', `正在读取 ${file.name}，请稍候...`);
+    try {
+      const ext = file.name.split('.').pop().toLowerCase();
+      let rows = [];
+      if(ext === 'csv') {
+        const text = await file.text();
+        rows = text.split(/\r?\n/).filter(Boolean).map(line => line.split(',').map(x => x.replace(/^"|"$/g,'').trim()));
+      } else {
+        if(typeof XLSX === 'undefined') throw new Error('Excel 组件还在加载，请稍后重试');
+        const buf = await file.arrayBuffer();
+        const wb = XLSX.read(buf, {type:'array', cellDates:true});
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+      }
+      if(rows.length < 2) throw new Error('文件内容为空');
+      const headerIdx = rows.findIndex(r => r.some(c => /热点|标题|关键词|平台|热度|排名|分类/i.test(String(c))));
+      const header = (headerIdx >= 0 ? rows[headerIdx] : rows[0]).map(x => String(x || '').trim());
+      const start = (headerIdx >= 0 ? headerIdx : 0) + 1;
+      const find = (names) => header.findIndex(h => names.some(n => h.replace(/\s+/g,'').toLowerCase().includes(n.toLowerCase())));
+      const idx = {
+        platform: find(['平台','source','platform']),
+        keyword: find(['热点词','关键词','话题','热点','keyword','word','title','标题']),
+        title: find(['标题','内容','title','name']),
+        rank: find(['排名','rank','序号']),
+        heat: find(['热度','指数','heat','score','value']),
+        participants: find(['参与人数','参与','人数','participant','participants','join']),
+        views: find(['浏览量','浏览','观看量','阅读量','views','view','read']),
+        heatText: find(['热度文本','热度说明','heatText','desc']),
+        category: find(['分类','类别','category','tag']),
+        url: find(['链接','url','link'])
+      };
+      const items = rows.slice(start).map((r,i) => {
+        const raw = {
+          platform: idx.platform >= 0 ? r[idx.platform] : '手动导入',
+          keyword: idx.keyword >= 0 ? r[idx.keyword] : r[0],
+          title: idx.title >= 0 ? r[idx.title] : '',
+          rank: idx.rank >= 0 ? r[idx.rank] : i+1,
+          heat: idx.heat >= 0 ? r[idx.heat] : '',
+          participants: idx.participants >= 0 ? r[idx.participants] : '',
+          views: idx.views >= 0 ? r[idx.views] : '',
+          heatText: idx.heatText >= 0 ? r[idx.heatText] : '',
+          category: idx.category >= 0 ? r[idx.category] : '',
+          url: idx.url >= 0 ? r[idx.url] : '',
+          _source: 'import'
+        };
+        return P._normalizeHotspotItem(raw, String(raw.platform || '手动导入').includes('小红书') ? '小红书' : String(raw.platform || '').includes('抖音') ? '抖音' : String(raw.platform || '手动导入'), i);
+      }).filter(Boolean);
+      if(!items.length) throw new Error('没有识别到热点数据');
+      P._closeXhsLoadingModal();
+      const ok = await P._openHotspotImportPreview(items, '确认导入热点文件');
+      if(!ok) return;
+      const result = P._mergeHotspots(items);
+      UI.toast(`热点导入完成：新增 ${result.added} 条，更新 ${result.updated} 条`);
+      P.renderHotspots();
+    } catch(err) {
+      P._closeXhsLoadingModal();
+      console.error('热点导入失败', err);
+      UI.toast('热点导入失败：' + err.message, 'error');
+    }
+  };
+  input.click();
+};
+
+P._hotspotUpdateStatus = (id, status) => {
+  const items = P._hotspotLoad();
+  const idx = items.findIndex(x => x.id === id);
+  if(idx < 0) return;
+  items[idx].status = status;
+  items[idx].updatedAt = H.nowISO();
+  P._hotspotSave(items);
+  P.renderHotspots();
+};
+
+P._hotspotToInspiration = async (id) => {
+  const items = P._hotspotLoad();
+  const h = items.find(x => x.id === id);
+  if(!h) return;
+  const desc = `来源平台：${h.platform || '-'}\n热点排名：${h.rank || '-'}\n参与人数：${h.participants ? H.fmtNum(Number(h.participants)||h.participants) : '-'}\n浏览量：${h.views ? H.fmtNum(Number(h.views)||h.views) : '-'}\n热度文本：${h.heatText || '-'}\n适配度：${h.fitLevel || '-'}（${h.fitScore || 0}）\n\n推荐角度：\n${h.angle || ''}\n\n原始标题：${h.title || h.keyword || ''}${h.sourceUrl ? '\n来源链接：' + h.sourceUrl : ''}`;
+  const inserted = await S.inspirations.add({
+    id: H.uid('insp_'),
+    title: h.keyword || h.title,
+    description: desc,
+    source: `热点中心/${h.platform || ''}`,
+    tags: ['热点', h.platform, h.fitLevel === '高' ? '高适配' : '待判断'].filter(Boolean),
+    status: 'active',
+    convertedTopicId: null,
+    createdAt: H.nowISO(),
+    updatedAt: H.nowISO()
+  });
+  if(!inserted) { UI.toast('保存灵感失败，请查看 Console', 'error'); return; }
+  P._hotspotUpdateStatus(id, 'saved_inspiration');
+  UI.toast('已保存为灵感');
+};
+
+P._hotspotToTopic = async (id) => {
+  const items = P._hotspotLoad();
+  const h = items.find(x => x.id === id);
+  if(!h) return;
+  const title = h.fitLevel === '高' ? `${h.keyword}，可以做一条自驾游热点内容` : `借势「${h.keyword}」做旅行内容`;
+  const topic = {
+    id: H.uid('top_'),
+    title,
+    coreContent: `热点：${h.keyword || h.title}\n平台：${h.platform || '-'}\n排名：${h.rank || '-'}\n参与人数：${h.participants ? H.fmtNum(Number(h.participants)||h.participants) : '-'}\n浏览量：${h.views ? H.fmtNum(Number(h.views)||h.views) : '-'}\n热度文本：${h.heatText || '-'}\n适配度：${h.fitLevel || '-'}（${h.fitScore || 0}）\n\n推荐内容角度：\n${h.angle || ''}\n\n执行建议：\n1. 先判断这个热点能否和城市/路线/自驾/旅行情绪绑定。\n2. 优先做小红书图文封面标题，标题里保留热点关键词。\n3. 内容结构建议：热点切入 → 旅行场景 → 路线/地点清单 → 收藏引导。`,
+    goal: '曝光',
+    priority: h.fitScore >= 75 ? 'P1' : 'P2',
+    theme: '热点借势',
+    format: '图文',
+    hook: '热点型',
+    tags: ['热点', h.platform, h.fitLevel === '高' ? '高适配' : '待判断'].filter(Boolean),
+    plannedDate: H.today(),
+    estimatedWorkload: '1h',
+    status: 'todo',
+    notes: h.sourceUrl ? '来源：' + h.sourceUrl : '来源：热点中心',
+    sourcePlatform: 'hotspot',
+    sourceUrl: h.sourceUrl || '',
+    createdAt: H.nowISO(),
+    updatedAt: H.nowISO()
+  };
+  const inserted = await S.topics.add(topic);
+  if(!inserted) { UI.toast('生成选题失败，请查看 Console', 'error'); return; }
+  P._hotspotUpdateStatus(id, 'saved_topic');
+  UI.toast('已生成选题');
+};
+
 // ==================== 灵感池（独立页面） ====================
 
 P._inspFilter = 'all'; // all | active | converted | archived
@@ -2793,7 +3488,7 @@ P.renderContents = (containerId) => {
   html += `<button class="filter-chip ${F.hasAd==='all'?'active':''}" data-multi-filter="hasAd" data-value="">全部</button>`;
   adOpts.forEach(o=>html+=`<button class="filter-chip ${F.hasAd===o.v?'active':''}" data-multi-filter="hasAd" data-value="${o.v}">${o.l}</button>`);
   html += `<span class="text-gray-300 mx-2">|</span><span class="text-gray-400">快捷排序：</span>`;
-  [['exposure','🔥曝光'],['likes','❤️点赞'],['comments','💬评论'],['followerGrowth','📈涨粉'],['adCost','💰投流'],['rating','⭐S级']].forEach(([k,lb])=>html+=`<button class="filter-chip" data-quick-sort="${k}" data-desc="true">${lb}最高</button>`);
+  [['exposure','🔥曝光'],['likes','❤️点赞'],['comments','💬评论'],['followerGrowth','📈涨粉'],['adCost','💰投流金额'],['rating','⭐S级']].forEach(([k,lb])=>html+=`<button class="filter-chip" data-quick-sort="${k}" data-desc="true">${lb}最高</button>`);
   html += `</div></div>`;
   html += `</div>`; // end filter card
 
@@ -2805,10 +3500,9 @@ P.renderContents = (containerId) => {
   } else {
     html += `<div class="overflow-x-auto"><table class="cos-table">
       <thead><tr>
-        <th>封面</th><th style="min-width:220px">标题</th><th>平台</th><th>发布时间</th>${P._renderSortTh('观看量','views')}${P._renderSortTh('曝光','exposure')}${P._renderSortTh('点赞','likes')}${P._renderSortTh('评论','comments')}${P._renderSortTh('收藏','favorites')}${P._renderSortTh('分享','shares')}<th>投流</th><th>金额</th><th>操作</th>
+        <th>封面</th><th style="min-width:220px">标题</th><th>平台</th><th>发布时间</th>${P._renderSortTh('观看量','views')}${P._renderSortTh('曝光','exposure')}${P._renderSortTh('点赞','likes')}${P._renderSortTh('评论','comments')}${P._renderSortTh('收藏','favorites')}${P._renderSortTh('分享','shares')}${P._renderSortTh('投流金额','adCost')}<th>操作</th>
       </tr></thead><tbody>
       ${pageItems.map(c=>{
-        const hasAd=(c.metrics?.adCost||0)>0;
         return `<tr>
         <td>${(()=>{const img=H.getCoverImage(c);return img?`<img src="${img}" class="img-thumb" loading="lazy">`:'<div class="w-10 h-10 rounded-md bg-gray-100 flex items-center justify-center text-gray-400 text-xs">暂无</div>';})()}</td>
         <td class="cos-td-title"><div class="title-tooltip"><span class="title-text text-sm font-medium text-gray-900" data-view-content="${c.id}">${H.esc(H.truncate(c.title,20))}</span><span class="title-tooltip-text">${H.esc(c.title)}</span></div></td>
@@ -2820,8 +3514,7 @@ P.renderContents = (containerId) => {
         <td class="text-xs text-gray-600 font-mono tabular-nums">${P._renderMetricCell(c,'comments','data-metric-edit="'+H.esc(c.id)+'" data-metric-field="comments"')}</td>
         <td class="text-xs text-gray-600 font-mono tabular-nums">${P._renderMetricCell(c,'favorites','data-metric-edit="'+H.esc(c.id)+'" data-metric-field="favorites"')}</td>
         <td class="text-xs text-gray-600 font-mono tabular-nums">${P._renderMetricCell(c,'shares','data-metric-edit="'+H.esc(c.id)+'" data-metric-field="shares"')}</td>
-        <td>${hasAd?'<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-50 text-yellow-700">是</span>':'<span class="text-xs text-gray-400">-</span>'}</td>
-        <td class="text-xs text-gray-600 font-mono tabular-nums">${hasAd?'¥'+H.fmtNum(c.metrics?.adCost):'-'}</td>
+        <td class="text-xs text-gray-600 font-mono tabular-nums"><span class="cos-inline-edit" data-metric-edit="${H.esc(c.id)}" data-metric-field="adCost" contenteditable="true">${P._metricNumber(c.metrics?.adCost)}</span></td>
         <td><div class="flex gap-0.5">
           <button class="cos-btn cos-btn-ghost cos-btn-xs" data-edit-content="${c.id}">✏️</button>
           <button class="cos-btn cos-btn-ghost cos-btn-xs" data-delete-content="${c.id}">🗑️</button>
@@ -2866,8 +3559,8 @@ P._renderFilterGroup = (label,key,options,selected) => {
 P._bindContentEvents = (platforms,themes,formats,hooks,goals) => {
   const F = P._contentFilters;
 
-  // 数据指标 行内编辑（观看量/曝光/点赞/评论/收藏/分享 通用）
-  const metricLabels = { views:'观看量', exposure:'曝光', likes:'点赞', comments:'评论', favorites:'收藏', shares:'分享' };
+  // 数据指标 行内编辑（观看量/曝光/点赞/评论/收藏/分享/投流金额 通用）
+  const metricLabels = { views:'观看量', exposure:'曝光', likes:'点赞', comments:'评论', favorites:'收藏', shares:'分享', adCost:'投流金额' };
   document.querySelectorAll('[data-metric-edit], [data-views-edit]').forEach(el=>{
     const field = el.dataset.metricField || 'views';
     const cid = el.dataset.metricEdit || el.dataset.viewsEdit;
@@ -5430,6 +6123,7 @@ P.renderAnalytics = () => {
 
 P.routes = {
   inspirations:() => { P._setHeader('灵感池', '记录未成熟的想法 · 择机转为选题'); P.renderInspirations(); },
+  hotspots:() => { P._setHeader('热点中心', '粘贴小红书/抖音热点 · 一键沉淀为灵感或选题'); P.renderHotspots(); },
   topics:   () => { P._setHeader('选题库', '管理内容选题与优先级'); P.renderTopicsPage(); },
   contents: () => { P._setHeader('内容库', '已完成内容的归档管理'); P.renderContentsPage(); },
   calendar:   () => { P._setHeader('内容日历', '排期与发布计划'); P.renderCalendarPage(); },
