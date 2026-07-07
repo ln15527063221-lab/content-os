@@ -104,7 +104,26 @@
   /* === 图片预览 === */
   .img-thumb { width:40px; height:40px; border-radius:6px; object-fit:cover; border:1px solid #f1f5f9; }
 
-  /* === 表格排序图标 === */
+    /* === 趋势图自定义悬浮提示 === */
+  .trend-chart-wrap { position: relative; }
+  .trend-tooltip {
+    position: absolute;
+    z-index: 20;
+    min-width: 150px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: rgba(15, 23, 42, 0.92);
+    color: #fff;
+    font-size: 12px;
+    line-height: 1.45;
+    box-shadow: 0 10px 30px rgba(15,23,42,0.18);
+    pointer-events: none;
+    white-space: nowrap;
+  }
+  .trend-tooltip .muted { color: #cbd5e1; }
+  .trend-point:hover circle:first-child { stroke-width: 3; }
+
+/* === 表格排序图标 === */
   .sortable-th { cursor: pointer; user-select: none; white-space: nowrap; vertical-align: middle; }
   .sortable-th:hover { color: #1e40af; }
   .sortable-th.active { color: #2563eb; }
@@ -3479,6 +3498,60 @@ P._trendSourceLabel = (source) => {
   if(String(source).includes('_before')) return '导入前';
   return source;
 };
+P._trendDateObj = (v) => {
+  if(!v) return null;
+  if(v instanceof Date && !isNaN(v.getTime())) return v;
+  const s = String(v).trim();
+  if(!s) return null;
+  const cn = s.match(/^(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日(?:\s*(\d{1,2})\s*时?\s*(\d{1,2})?\s*分?\s*(\d{1,2})?\s*秒?)?/);
+  if(cn) return new Date(Number(cn[1]), Number(cn[2])-1, Number(cn[3]), Number(cn[4]||0), Number(cn[5]||0), Number(cn[6]||0));
+  const m = s.match(/^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})(?:[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+  if(m && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(s)) return new Date(Number(m[1]), Number(m[2])-1, Number(m[3]), Number(m[4]||0), Number(m[5]||0), Number(m[6]||0));
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+};
+P._trendAxisParts = (v, includeTime = true) => {
+  const d = P._trendDateObj(v);
+  if(!d) {
+    const raw = String(v || '').trim();
+    return { date: raw ? raw.slice(5,10).replace('-', '/') : '-', time: '' };
+  }
+  const mm = String(d.getMonth()+1).padStart(2,'0');
+  const dd = String(d.getDate()).padStart(2,'0');
+  const hh = String(d.getHours()).padStart(2,'0');
+  const mi = String(d.getMinutes()).padStart(2,'0');
+  return { date: mm + '/' + dd, time: includeTime ? (hh + ':' + mi) : '' };
+};
+P._showTrendTooltip = (evt, tipId, el) => {
+  const tip = document.getElementById(tipId);
+  if(!tip) return;
+  const get = (name) => el?.getAttribute ? (el.getAttribute(name) || '') : '';
+  const time = get('data-time');
+  const label = get('data-label');
+  const value = get('data-value');
+  const delta = get('data-delta');
+  tip.innerHTML = `
+    <div class="muted">${H.esc(time)}</div>
+    <div>${H.esc(label)}：<b>${H.esc(value)}</b></div>
+    <div>${H.esc(delta)}</div>
+  `;
+  tip.classList.remove('hidden');
+  const wrap = tip.closest('.trend-chart-wrap') || tip.parentElement;
+  const rect = wrap.getBoundingClientRect();
+  const tipW = tip.offsetWidth || 180;
+  const tipH = tip.offsetHeight || 72;
+  let left = evt.clientX - rect.left + 14;
+  let top = evt.clientY - rect.top - tipH - 14;
+  if(left + tipW > rect.width - 8) left = evt.clientX - rect.left - tipW - 14;
+  if(left < 8) left = 8;
+  if(top < 8) top = evt.clientY - rect.top + 14;
+  tip.style.left = left + 'px';
+  tip.style.top = top + 'px';
+};
+P._hideTrendTooltip = (tipId) => {
+  const tip = document.getElementById(tipId);
+  if(tip) tip.classList.add('hidden');
+};
 P._renderTrendChart = (history, key, contentId) => {
   const label = P._trendMetricLabels[key] || key;
   const color = P._trendMetricColors[key] || '#2563eb';
@@ -3490,10 +3563,35 @@ P._renderTrendChart = (history, key, contentId) => {
     </div>`;
   }
   const values = history.map(s => P._metricNumber(s[key]));
-  const maxV = Math.max(1, ...values);
-  const minV = Math.min(...values);
+  const allSame = values.every(v => v === values[0]);
+  if(allSame) {
+    const last = history[history.length - 1] || {};
+    return `<div class="rounded-2xl border border-gray-100 bg-white p-6">
+      <div class="flex items-center justify-between mb-4">
+        <div><div class="text-sm font-semibold text-gray-800">${label}趋势</div><div class="text-xs text-gray-400 mt-0.5">按每次导入/编辑记录生成</div></div>
+        <div class="text-right"><div class="text-lg font-bold text-gray-900">${H.fmtNum(values[values.length-1])}</div><div class="text-xs text-gray-400">当前${label}</div></div>
+      </div>
+      <div class="h-56 rounded-2xl bg-gray-50 border border-dashed border-gray-200 flex flex-col items-center justify-center text-center px-4">
+        <div class="text-3xl mb-2">—</div>
+        <div class="text-sm font-medium text-gray-700">当前${label}暂无增长变化</div>
+        <div class="text-xs text-gray-400 mt-1">已记录 ${history.length} 次，${label}都为 ${H.fmtNum(values[0])}。</div>
+        <div class="text-[11px] text-gray-400 mt-1">最近记录：${H.fmtDateTime(last.importedAt)}</div>
+      </div>
+    </div>`;
+  }
+  const maxRaw = Math.max(1, ...values);
+  const niceStep = (maxValue, tickCount = 4) => {
+    const rough = Math.max(1, maxValue / tickCount);
+    const pow = Math.pow(10, Math.floor(Math.log10(rough)));
+    const factor = rough / pow;
+    const niceFactor = factor <= 1 ? 1 : factor <= 2 ? 2 : factor <= 5 ? 5 : 10;
+    return niceFactor * pow;
+  };
+  const step = niceStep(maxRaw, 4);
+  const minV = 0;
+  const maxV = Math.max(step, Math.ceil(maxRaw / step) * step);
   const range = Math.max(1, maxV - minV);
-  const W = 900, Hh = 300, padL = 54, padR = 24, padT = 28, padB = 42;
+  const W = 900, Hh = 330, padL = 58, padR = 24, padT = 28, padB = 50;
   const w = W - padL - padR, h = Hh - padT - padB;
   const xAt = (i) => padL + (history.length === 1 ? 0 : (i/(history.length-1))*w);
   const yAt = (v) => padT + h - ((v - minV) / range) * h;
@@ -3501,21 +3599,43 @@ P._renderTrendChart = (history, key, contentId) => {
   const path = pts.map((p,i)=>(i?'L':'M') + p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
   const baseY = padT + h;
   const area = `${path} L ${xAt(history.length-1).toFixed(1)},${baseY.toFixed(1)} L ${xAt(0).toFixed(1)},${baseY.toFixed(1)} Z`;
-  const grid = [0,0.25,0.5,0.75,1].map(r => {
-    const y = padT + h * r;
-    const val = Math.round(maxV - (maxV-minV)*r);
-    return `<g><line x1="${padL}" y1="${y.toFixed(1)}" x2="${W-padR}" y2="${y.toFixed(1)}" stroke="#eef2f7" stroke-dasharray="4 4"/><text x="12" y="${(y+4).toFixed(1)}" font-size="11" fill="#94a3b8">${H.fmtNum(val)}</text></g>`;
+  const gridVals = [];
+  for(let v = maxV; v >= 0; v -= step) gridVals.push(v);
+  if(gridVals[gridVals.length - 1] !== 0) gridVals.push(0);
+  const grid = gridVals.map((val) => {
+    const y = yAt(val);
+    return `<g><line x1="${padL}" y1="${y.toFixed(1)}" x2="${W-padR}" y2="${y.toFixed(1)}" stroke="#eef2f7" stroke-dasharray="4 4"/><text x="14" y="${(y+4).toFixed(1)}" font-size="11" fill="#94a3b8">${H.fmtNum(Math.round(val))}</text></g>`;
   }).join('');
-  const circles = pts.map((p,i)=>`<g><circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="4" fill="#fff" stroke="${color}" stroke-width="2"/><title>${H.fmtDateTime(history[i].importedAt)}｜${label} ${H.fmtNum(values[i])}</title></g>`).join('');
+  const safeChartId = String(contentId||'c').replace(/[^a-zA-Z0-9_]/g,'') + '_' + key;
+  const tipId = 'trendTip_' + safeChartId;
+  const circles = pts.map((p,i)=>{
+    const prev = i > 0 ? values[i-1] : null;
+    const delta = prev == null ? null : values[i] - prev;
+    const deltaText = delta == null ? '首次记录' : (delta > 0 ? `较上次 +${H.fmtNum(delta)}` : delta < 0 ? `较上次 ${H.fmtNum(delta)}` : '较上次 0');
+    return `<g class="trend-point" style="cursor:pointer"
+      data-time="${H.esc(H.fmtDateTime(history[i].importedAt))}"
+      data-label="${H.esc(label)}"
+      data-value="${H.esc(H.fmtNum(values[i]))}"
+      data-delta="${H.esc(deltaText)}"
+      onmousemove="P._showTrendTooltip(event, '${tipId}', this)"
+      onmouseleave="P._hideTrendTooltip('${tipId}')">
+      <circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="4" fill="#fff" stroke="${color}" stroke-width="2"/>
+      <circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="16" fill="transparent" stroke="transparent"></circle>
+    </g>`;
+  }).join('');
   const labelEvery = Math.max(1, Math.ceil(history.length / 6));
+  const seenDayLabels = {};
   const xLabels = history.map((s,i)=>{
     if(i !== 0 && i !== history.length-1 && i % labelEvery !== 0) return '';
-    const d = H.parseDate(s.importedAt) || String(s.importedAt || '').slice(0,10);
-    const txt = d ? d.slice(5).replace('-', '/') : (i+1);
-    return `<text x="${xAt(i).toFixed(1)}" y="${(Hh-14)}" text-anchor="middle" font-size="11" fill="#94a3b8">${H.esc(txt)}</text>`;
+    const parts = P._trendAxisParts(s.importedAt, false);
+    const dateLabel = parts.date || '-';
+    // 横轴只显示日期；同一天重复记录只显示首尾必要标签，具体时间放到圆点悬浮提示里。
+    if(seenDayLabels[dateLabel] && i !== history.length-1) return '';
+    seenDayLabels[dateLabel] = true;
+    return `<text x="${xAt(i).toFixed(1)}" y="${(Hh-24)}" text-anchor="middle" font-size="11" fill="#94a3b8">${H.esc(dateLabel)}</text>`;
   }).join('');
-  const gradId = 'trendGrad_' + String(contentId||'c').replace(/[^a-zA-Z0-9_]/g,'') + '_' + key;
-  return `<div class="rounded-2xl border border-gray-100 bg-white p-4">
+  const gradId = 'trendGrad_' + safeChartId;
+  return `<div class="trend-chart-wrap rounded-2xl border border-gray-100 bg-white p-4">
     <div class="flex items-center justify-between mb-2">
       <div><div class="text-sm font-semibold text-gray-800">${label}趋势</div><div class="text-xs text-gray-400 mt-0.5">按每次导入/编辑记录生成</div></div>
       <div class="text-right"><div class="text-lg font-bold text-gray-900">${H.fmtNum(values[values.length-1])}</div><div class="text-xs text-gray-400">当前${label}</div></div>
@@ -3528,6 +3648,7 @@ P._renderTrendChart = (history, key, contentId) => {
       ${circles}
       ${xLabels}
     </svg>
+    <div id="${tipId}" class="trend-tooltip hidden"></div>
   </div>`;
 };
 P._renderContentTrendModal = (c, activeKey) => {
