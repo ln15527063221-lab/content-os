@@ -1731,17 +1731,29 @@ P._hotspotReadLocal = () => {
   }
 };
 
-P._hotspotSyncToCloud = (items) => {
+P._hotspotSyncToCloud = async (items) => {
   const safeItems = Array.isArray(items) ? items : [];
   try {
     if(S?.db?.config) S.db.config.hotspots = safeItems;
-    if(window.SUPABASE) {
-      SUPABASE.from('config')
-        .upsert({ key:'hotspots', value:safeItems })
-        .then(({ error }) => { if(error) console.warn('热点云端保存失败：', error.message); });
+    // 注意：SUPABASE 是全局 const，不一定挂在 window 上，所以不能用 window.SUPABASE 判断。
+    if(typeof SUPABASE !== 'undefined' && SUPABASE?.from) {
+      const { error } = await SUPABASE
+        .from('config')
+        .upsert({ key:'hotspots', value:safeItems }, { onConflict:'key' });
+      if(error) {
+        console.warn('热点云端保存失败：', error.message);
+        UI?.toast?.('热点已保存到本地，但云端同步失败：' + error.message, 'error');
+        return false;
+      }
+      console.log('✅ 热点云端已保存：', safeItems.length, '条');
+      return true;
     }
+    console.warn('热点云端保存跳过：SUPABASE 未初始化');
+    return false;
   } catch(e) {
     console.warn('热点云端保存异常', e);
+    UI?.toast?.('热点已保存到本地，但云端同步异常：' + e.message, 'error');
+    return false;
   }
 };
 
@@ -1760,11 +1772,12 @@ P._hotspotLoad = () => {
   return Array.isArray(cloudItems) ? cloudItems : localItems;
 };
 
-P._hotspotSave = (items) => {
+P._hotspotSave = async (items) => {
   const safeItems = Array.isArray(items) ? items : [];
   try { localStorage.setItem(P._HOTSPOT_STORAGE_KEY, JSON.stringify(safeItems)); }
   catch(e) { UI.toast('热点本地保存失败：' + e.message, 'error'); }
-  P._hotspotSyncToCloud(safeItems);
+  const cloudOK = await P._hotspotSyncToCloud(safeItems);
+  return { localOK: true, cloudOK, total: safeItems.length };
 };
 
 P._hotspotGetConfig = () => {
@@ -1859,7 +1872,7 @@ P._extractHotspotList = (json) => {
   return [];
 };
 
-P._mergeHotspots = (newItems) => {
+P._mergeHotspots = async (newItems) => {
   const oldItems = P._hotspotLoad();
   const byKey = new Map();
   oldItems.forEach(item => byKey.set(`${item.platform}|${P._hotspotNormKey(item.keyword || item.title)}`, item));
@@ -1876,8 +1889,8 @@ P._mergeHotspots = (newItems) => {
     }
   });
   const merged = Array.from(byKey.values()).sort((a,b)=>(b.fetchedAt||b.createdAt||'').localeCompare(a.fetchedAt||a.createdAt||''));
-  P._hotspotSave(merged);
-  return { added, updated, total: merged.length };
+  const saveResult = await P._hotspotSave(merged);
+  return { added, updated, total: merged.length, cloudOK: !!saveResult.cloudOK };
 };
 
 P._hotspotStatusLabel = (s) => ({candidate:'待判断', saved_inspiration:'已存灵感', saved_topic:'已生成选题', ignored:'已忽略'}[s] || s || '待判断');
@@ -1998,10 +2011,10 @@ P.renderHotspots = () => {
   if(searchEl) searchEl.oninput = () => { P._hotspotSearch = searchEl.value.trim(); clearTimeout(P._hotspotSearchTimer); P._hotspotSearchTimer = setTimeout(()=>P.renderHotspots(), 250); };
   document.querySelectorAll('[data-hot-to-insp]').forEach(btn => btn.onclick = () => P._hotspotToInspiration(btn.dataset.hotToInsp));
   document.querySelectorAll('[data-hot-to-topic]').forEach(btn => btn.onclick = () => P._hotspotToTopic(btn.dataset.hotToTopic));
-  document.querySelectorAll('[data-hot-ignore]').forEach(btn => btn.onclick = () => P._hotspotUpdateStatus(btn.dataset.hotIgnore, 'ignored'));
+  document.querySelectorAll('[data-hot-ignore]').forEach(btn => btn.onclick = async () => await P._hotspotUpdateStatus(btn.dataset.hotIgnore, 'ignored'));
   document.querySelectorAll('[data-hot-delete]').forEach(btn => btn.onclick = async () => {
     const ok = await UI.confirm('删除热点', '确定删除这条热点记录？', {danger:true, confirmText:'删除'});
-    if(ok) { P._hotspotSave(P._hotspotLoad().filter(x => x.id !== btn.dataset.hotDelete)); P.renderHotspots(); }
+    if(ok) { await P._hotspotSave(P._hotspotLoad().filter(x => x.id !== btn.dataset.hotDelete)); P.renderHotspots(); }
   });
 };
 
@@ -2154,8 +2167,8 @@ P._openHotspotPasteModal = async () => {
   const items = P._parseHotspotPasteText(data.text || '', { platform:data.platform || '小红书', category:data.category || '出行', source:data.source || '小红书笔记灵感' });
   const ok = await P._openHotspotImportPreview(items, '确认导入粘贴热点');
   if(!ok) return;
-  const result = P._mergeHotspots(items);
-  UI.toast(`热点导入完成：新增 ${result.added} 条，更新 ${result.updated} 条`);
+  const result = await P._mergeHotspots(items);
+  UI.toast(`热点导入完成：新增 ${result.added} 条，更新 ${result.updated} 条${result.cloudOK ? '，已同步云端' : '，云端未同步'}`);
   P.renderHotspots();
 };
 
@@ -2200,8 +2213,8 @@ P._openHotspotManualModal = async () => {
     angle: data.angle || '',
     _source: 'manual'
   }, data.platform || '小红书', 0);
-  const result = P._mergeHotspots([item].filter(Boolean));
-  UI.toast(`热点已保存：新增 ${result.added} 条，更新 ${result.updated} 条`);
+  const result = await P._mergeHotspots([item].filter(Boolean));
+  UI.toast(`热点已保存：新增 ${result.added} 条，更新 ${result.updated} 条${result.cloudOK ? '，已同步云端' : '，云端未同步'}`);
   P.renderHotspots();
 };
 
@@ -2237,9 +2250,9 @@ P._fetchHotspots = async (platform, btn) => {
     const list = P._extractHotspotList(json);
     const normalized = list.map((x,i)=>P._normalizeHotspotItem(x, platform, i)).filter(Boolean);
     if(!normalized.length) throw new Error('接口返回中没有识别到热点列表');
-    const result = P._mergeHotspots(normalized);
+    const result = await P._mergeHotspots(normalized);
     P._closeXhsLoadingModal();
-    UI.toast(`${platform}热点抓取完成：新增 ${result.added} 条，更新 ${result.updated} 条`);
+    UI.toast(`${platform}热点抓取完成：新增 ${result.added} 条，更新 ${result.updated} 条${result.cloudOK ? '，已同步云端' : '，云端未同步'}`);
     P.renderHotspots();
   } catch(e) {
     P._closeXhsLoadingModal();
@@ -2345,8 +2358,8 @@ P._importHotspotFile = () => {
       P._closeXhsLoadingModal();
       const ok = await P._openHotspotImportPreview(items, '确认导入热点文件');
       if(!ok) return;
-      const result = P._mergeHotspots(items);
-      UI.toast(`热点导入完成：新增 ${result.added} 条，更新 ${result.updated} 条`);
+      const result = await P._mergeHotspots(items);
+      UI.toast(`热点导入完成：新增 ${result.added} 条，更新 ${result.updated} 条${result.cloudOK ? '，已同步云端' : '，云端未同步'}`);
       P.renderHotspots();
     } catch(err) {
       P._closeXhsLoadingModal();
@@ -2357,13 +2370,13 @@ P._importHotspotFile = () => {
   input.click();
 };
 
-P._hotspotUpdateStatus = (id, status) => {
+P._hotspotUpdateStatus = async (id, status) => {
   const items = P._hotspotLoad();
   const idx = items.findIndex(x => x.id === id);
   if(idx < 0) return;
   items[idx].status = status;
   items[idx].updatedAt = H.nowISO();
-  P._hotspotSave(items);
+  await P._hotspotSave(items);
   P.renderHotspots();
 };
 
@@ -2384,7 +2397,7 @@ P._hotspotToInspiration = async (id) => {
     updatedAt: H.nowISO()
   });
   if(!inserted) { UI.toast('保存灵感失败，请查看 Console', 'error'); return; }
-  P._hotspotUpdateStatus(id, 'saved_inspiration');
+  await P._hotspotUpdateStatus(id, 'saved_inspiration');
   UI.toast('已保存为灵感');
 };
 
@@ -2414,7 +2427,7 @@ P._hotspotToTopic = async (id) => {
   };
   const inserted = await S.topics.add(topic);
   if(!inserted) { UI.toast('生成选题失败，请查看 Console', 'error'); return; }
-  P._hotspotUpdateStatus(id, 'saved_topic');
+  await P._hotspotUpdateStatus(id, 'saved_topic');
   UI.toast('已生成选题');
 };
 
