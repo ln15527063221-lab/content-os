@@ -2029,9 +2029,10 @@ P._hotspotFormatNumberText = (n) => {
 };
 
 P._parseHotspotMetricLine = (line) => {
-  const text = String(line || '').replace(/,/g,'').trim();
-  const joinMatch = text.match(/([0-9]+(?:\.[0-9]+)?\s*[万亿wW]?)\s*人参与/);
-  const viewMatch = text.match(/([0-9]+(?:\.[0-9]+)?\s*[万亿wW]?)\s*次浏览/);
+  const text = String(line || '').replace(/,/g,'').replace(/\s+/g,' ').trim();
+  const num = '([0-9]+(?:\\.[0-9]+)?\\s*[万亿wW]?)';
+  const joinMatch = text.match(new RegExp(num + '\\s*(?:人)?\\s*参与')) || text.match(new RegExp('参与(?:人数|量)?[：:]?\\s*' + num));
+  const viewMatch = text.match(new RegExp(num + '\\s*(?:次)?\\s*浏览')) || text.match(new RegExp('浏览(?:量|次数)?[：:]?\\s*' + num));
   return {
     participants: joinMatch ? P._hotspotExtractNumber(joinMatch[1]) : '',
     views: viewMatch ? P._hotspotExtractNumber(viewMatch[1]) : '',
@@ -2040,40 +2041,71 @@ P._parseHotspotMetricLine = (line) => {
 };
 
 P._stripHotspotMetrics = (line) => {
-  return String(line || '')
-    .replace(/([0-9]+(?:\.[0-9]+)?\s*[万亿wW]?)\s*人参与/g, '')
-    .replace(/([0-9]+(?:\.[0-9]+)?\s*[万亿wW]?)\s*次浏览/g, '')
+  let text = String(line || '').replace(/,/g, '').trim();
+  // OCR 识别后经常把“分类 #话题名 热度”放在一行，这里只保留 # 后面的主题部分。
+  if(/[＃#]/.test(text)) text = text.replace(/^.*?[#＃]/, '#');
+  return text
+    .replace(/([0-9]+(?:\.[0-9]+)?\s*[万亿wW]?)\s*(?:人)?\s*参与/g, '')
+    .replace(/参与(?:人数|量)?[：:]?\s*([0-9]+(?:\.[0-9]+)?\s*[万亿wW]?)/g, '')
+    .replace(/([0-9]+(?:\.[0-9]+)?\s*[万亿wW]?)\s*(?:次)?\s*浏览/g, '')
+    .replace(/浏览(?:量|次数)?[：:]?\s*([0-9]+(?:\.[0-9]+)?\s*[万亿wW]?)/g, '')
     .replace(/[·•|｜]+/g, ' ')
     .replace(/^\s*[#＃]\s*/, '')
+    .replace(/^(出行|美食|时尚|娱乐|教育|职场|家居|母婴|摄影|旅行|旅游)\s+/, '')
     .trim();
 };
 
+P._hotspotIgnoreLine = (line) => {
+  const t = String(line || '').trim();
+  if(!t) return true;
+  if(/^(出行|美食|时尚|娱乐|教育|职场|家居|母婴|摄影|旅行|旅游)$/.test(t)) return true;
+  if(/^(笔记灵感|小红书|创作服务平台|推荐|热门|搜索|全部|换一换|查看更多|截图|上传)$/.test(t)) return true;
+  if(/^\d+$/.test(t)) return true;
+  return false;
+};
+
 P._parseHotspotPasteText = (text, defaults={}) => {
-  const lines = String(text || '')
+  const normalizedText = String(text || '')
     .replace(/\r/g, '\n')
+    .replace(/[ \t]*(#|＃)/g, '\n#')
+    .replace(/(人参与)\s+([0-9]+(?:\.[0-9]+)?\s*[万亿wW]?\s*(?:次)?浏览)/g, '$1 · $2');
+  const lines = normalizedText
     .split('\n')
     .map(x => x.trim())
     .filter(Boolean);
   const items = [];
   const used = new Set();
   const isMetric = (line) => /人参与|次浏览|浏览量|参与/.test(line) && /[0-9]/.test(line);
+  const mergeMetric = (a, b) => ({
+    participants: a.participants || b.participants || '',
+    views: a.views || b.views || '',
+    heatText: [a.heatText, b.heatText].filter(Boolean).join(' · ')
+  });
+
   for(let i=0; i<lines.length; i++) {
     if(used.has(i)) continue;
     const line = lines[i];
+    if(P._hotspotIgnoreLine(line)) continue;
+
     let keyword = '';
     let metric = P._parseHotspotMetricLine(line);
 
-    if(/^#|^＃/.test(line)) {
+    if(/^#|^＃/.test(line) || /[#＃]/.test(line)) {
       keyword = P._stripHotspotMetrics(line);
     } else if(!isMetric(line)) {
       keyword = P._stripHotspotMetrics(line);
     }
 
-    if(!keyword || keyword.length > 60) continue;
-    if((!metric.participants && !metric.views) && lines[i+1] && isMetric(lines[i+1])) {
-      metric = P._parseHotspotMetricLine(lines[i+1]);
-      used.add(i+1);
+    if(!keyword || keyword.length > 60 || P._hotspotIgnoreLine(keyword)) continue;
+
+    // 支持 OCR 把“参与人数”和“浏览量”拆成多行：话题名 / 23.5万人参与 / 3.7亿次浏览。
+    for(let j=i+1; j<Math.min(lines.length, i+4); j++) {
+      if(used.has(j)) continue;
+      if(!isMetric(lines[j])) break;
+      metric = mergeMetric(metric, P._parseHotspotMetricLine(lines[j]));
+      used.add(j);
     }
+
     used.add(i);
     const heatText = metric.heatText || [
       metric.participants ? P._hotspotFormatNumberText(metric.participants) + '人参与' : '',
@@ -2102,8 +2134,36 @@ P._parseHotspotPasteText = (text, defaults={}) => {
   });
 };
 
+P._hotspotLoadOCR = () => {
+  if(window.Tesseract?.recognize) return Promise.resolve(window.Tesseract);
+  if(P._hotspotOCRPromise) return P._hotspotOCRPromise;
+  P._hotspotOCRPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+    s.async = true;
+    s.onload = () => window.Tesseract?.recognize ? resolve(window.Tesseract) : reject(new Error('截图识别组件加载失败'));
+    s.onerror = () => reject(new Error('截图识别组件加载失败，请检查网络'));
+    document.head.appendChild(s);
+  });
+  return P._hotspotOCRPromise;
+};
+
+P._hotspotRecognizeImage = async (file, onProgress) => {
+  if(!file || !file.type?.startsWith('image/')) throw new Error('请选择截图图片');
+  const Tesseract = await P._hotspotLoadOCR();
+  onProgress?.('正在识别截图文字，首次使用会加载语言包，请稍等...');
+  const result = await Tesseract.recognize(file, 'chi_sim+eng', {
+    logger: (m) => {
+      if(!m) return;
+      const pct = m.progress ? Math.round(m.progress * 100) : '';
+      if(m.status) onProgress?.(`截图识别中：${m.status}${pct ? ' ' + pct + '%' : ''}`);
+    }
+  });
+  return result?.data?.text || '';
+};
+
 P._openHotspotImportPreview = async (items, title='确认导入热点') => {
-  if(!items || !items.length) { UI.toast('没有识别到热点，请检查粘贴内容', 'error'); return false; }
+  if(!items || !items.length) { UI.toast('没有识别到热点，请检查粘贴内容或截图清晰度', 'error'); return false; }
   const rows = items.slice(0, 60).map((h,i)=>`<tr>
     <td class="px-3 py-2 text-gray-400">${i+1}</td>
     <td class="px-3 py-2 font-medium text-gray-900">${H.esc(h.keyword || '')}</td>
@@ -2135,19 +2195,27 @@ P._openHotspotImportPreview = async (items, title='确认导入热点') => {
 P._openHotspotPasteModal = async () => {
   const sample = `# 拍拍家乡风景\n23.5万人参与 · 3.7亿次浏览\n\n# 夜宵好去处\n63.9万人参与 · 14.2亿次浏览\n\n# 苏州旅行\n32万人参与 · 14.9亿次浏览\n\n# 小众旅行地\n317.5万人参与 · 143.2亿次浏览`;
   const html = `<div class="p-6">
-    <h2 class="text-lg font-semibold text-gray-900 mb-1">粘贴导入热点</h2>
-    <p class="text-sm text-gray-500 mb-5">适合小红书创作服务平台「笔记灵感」页面。复制话题名和热度文字，粘贴到这里，系统会自动解析。</p>
+    <h2 class="text-lg font-semibold text-gray-900 mb-1">粘贴 / 截图导入热点</h2>
+    <p class="text-sm text-gray-500 mb-5">适合小红书创作服务平台「笔记灵感」页面。可以复制文字，也可以上传或直接粘贴截图识别。</p>
     <form id="hotspot-paste-form" class="space-y-4">
       <div class="grid grid-cols-3 gap-3">
         <div>${UI.renderField('平台','platform','select','小红书',['小红书','抖音','微博','手动'])}</div>
         <div>${UI.renderField('分类','category','text','出行',null,'出行 / 美食 / 情绪')}</div>
         <div>${UI.renderField('来源','source','text','小红书笔记灵感',null,'小红书笔记灵感')}</div>
       </div>
-      <div>
-        <label class="cos-label">粘贴内容</label>
-        <textarea name="text" class="cos-textarea" style="min-height:220px" placeholder="${H.esc(sample)}"></textarea>
+      <div class="rounded-lg border border-dashed border-blue-200 bg-blue-50/50 p-3">
+        <div class="flex flex-wrap items-center gap-2">
+          <button type="button" class="cos-btn cos-btn-secondary cos-btn-sm" id="hotspot-ocr-pick">📷 上传截图识别</button>
+          <span class="text-xs text-gray-500">也可以在这个弹窗里直接 Cmd/Ctrl + V 粘贴截图</span>
+          <input type="file" id="hotspot-ocr-file" class="hidden" accept="image/*">
+        </div>
+        <div id="hotspot-ocr-status" class="text-xs text-gray-500 mt-2 hidden"></div>
       </div>
-      <div class="text-xs text-gray-400 leading-5">支持格式：# 话题名 + 下一行“xx万人参与 · xx亿次浏览”；也支持把话题名和热度放在同一行。</div>
+      <div>
+        <label class="cos-label">粘贴内容 / 截图识别结果</label>
+        <textarea name="text" id="hotspot-paste-textarea" class="cos-textarea" style="min-height:220px" placeholder="${H.esc(sample)}"></textarea>
+      </div>
+      <div class="text-xs text-gray-400 leading-5">截图识别会先把图片文字填入上方文本框，请检查错字后再点击“识别并预览”。支持格式：# 话题名 + 下一行“xx万人参与 · xx亿次浏览”。</div>
       <div class="flex justify-end gap-3 pt-2">
         <button type="button" class="cos-btn cos-btn-secondary" data-modal-action="cancel">取消</button>
         <button type="button" class="cos-btn cos-btn-primary" id="hotspot-paste-preview">识别并预览</button>
@@ -2157,15 +2225,70 @@ P._openHotspotPasteModal = async () => {
   const p = UI.openModal(html, {width:'max-w-3xl'});
   setTimeout(()=>{
     const btn = document.getElementById('hotspot-paste-preview');
+    const pickBtn = document.getElementById('hotspot-ocr-pick');
+    const fileInput = document.getElementById('hotspot-ocr-file');
+    const textArea = document.getElementById('hotspot-paste-textarea');
+    const statusEl = document.getElementById('hotspot-ocr-status');
+    const modalBox = document.getElementById('modal-box');
+    const setStatus = (msg, type='info') => {
+      if(!statusEl) return;
+      statusEl.classList.remove('hidden');
+      statusEl.className = 'text-xs mt-2 ' + (type === 'error' ? 'text-red-500' : type === 'ok' ? 'text-emerald-600' : 'text-gray-500');
+      statusEl.textContent = msg || '';
+    };
+    const appendText = (txt) => {
+      if(!textArea || !txt) return;
+      const old = textArea.value.trim();
+      textArea.value = old ? old + '\n\n' + txt.trim() : txt.trim();
+      textArea.focus();
+    };
+    const handleFile = async (file) => {
+      if(!file) return;
+      try {
+        if(pickBtn) { pickBtn.disabled = true; pickBtn.textContent = '识别中...'; }
+        if(btn) btn.disabled = true;
+        setStatus('正在加载截图识别组件...');
+        const txt = await P._hotspotRecognizeImage(file, setStatus);
+        if(!txt.trim()) {
+          setStatus('没有识别到文字，请换一张更清晰的截图。', 'error');
+          return;
+        }
+        appendText(txt);
+        const previewCount = P._parseHotspotPasteText(txt, {
+          platform: document.querySelector('#hotspot-paste-form [name="platform"]')?.value || '小红书',
+          category: document.querySelector('#hotspot-paste-form [name="category"]')?.value || '出行',
+          source: document.querySelector('#hotspot-paste-form [name="source"]')?.value || '小红书笔记灵感'
+        }).length;
+        setStatus(`截图识别完成，初步识别到 ${previewCount} 条热点。请检查文本后点击“识别并预览”。`, 'ok');
+      } catch(e) {
+        console.error('热点截图识别失败', e);
+        setStatus('截图识别失败：' + (e.message || e), 'error');
+      } finally {
+        if(pickBtn) { pickBtn.disabled = false; pickBtn.textContent = '📷 上传截图识别'; }
+        if(btn) btn.disabled = false;
+      }
+    };
     if(btn) btn.onclick = () => {
       const form = document.getElementById('hotspot-paste-form');
       UI.closeModal(UI.readForm(form));
     };
+    if(pickBtn && fileInput) pickBtn.onclick = () => fileInput.click();
+    if(fileInput) fileInput.onchange = () => handleFile(fileInput.files?.[0]);
+    if(modalBox) modalBox.addEventListener('paste', (e) => {
+      const items = e.clipboardData?.items || [];
+      for(const item of items) {
+        if(item.type && item.type.startsWith('image/')) {
+          e.preventDefault();
+          handleFile(item.getAsFile());
+          break;
+        }
+      }
+    });
   }, 50);
   const data = await p;
   if(!data || data === 'cancel') return;
   const items = P._parseHotspotPasteText(data.text || '', { platform:data.platform || '小红书', category:data.category || '出行', source:data.source || '小红书笔记灵感' });
-  const ok = await P._openHotspotImportPreview(items, '确认导入粘贴热点');
+  const ok = await P._openHotspotImportPreview(items, '确认导入热点');
   if(!ok) return;
   const result = await P._mergeHotspots(items);
   UI.toast(`热点导入完成：新增 ${result.added} 条，更新 ${result.updated} 条${result.cloudOK ? '，已同步云端' : '，云端未同步'}`);
