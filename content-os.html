@@ -85,8 +85,8 @@
   .cos-td-title { min-width:200px; }
   .cos-td-title .title-text { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:block; cursor:pointer; }
   .cos-td-title .title-tooltip { position:relative; cursor:pointer; }
-  .cos-td-title .title-tooltip:hover .title-tooltip-text { visibility:visible; opacity:1; }
-  .cos-td-title .title-tooltip-text { visibility:hidden; opacity:0; position:absolute; left:0; top:100%; z-index:30; margin-top:4px; padding:6px 10px; background:#1e293b; color:#fff; font-size:12px; border-radius:6px; white-space:normal; word-break:break-all; max-width:320px; line-height:1.5; transition:opacity 0.15s; pointer-events:none; }
+  .cos-td-title .title-tooltip:hover .title-tooltip-text { visibility:hidden; opacity:0; }
+  .cos-td-title .title-tooltip-text { display:none !important; visibility:hidden; opacity:0; position:absolute; left:0; top:100%; z-index:30; margin-top:4px; padding:6px 10px; background:#1e293b; color:#fff; font-size:12px; border-radius:6px; white-space:normal; word-break:break-all; max-width:320px; line-height:1.5; transition:opacity 0.15s; pointer-events:none; }
 
   /* === 数字列等宽 === */
   .cos-td-num { white-space:nowrap; }
@@ -104,7 +104,13 @@
   /* === 图片预览 === */
   .img-thumb { width:40px; height:40px; border-radius:6px; object-fit:cover; border:1px solid #f1f5f9; }
 
-    /* === 趋势图自定义悬浮提示 === */
+    /* === 数据分析趋势点击点 === */
+  .analytics-trend-point circle:first-child { transition: all .15s ease; }
+  .analytics-trend-point:hover circle:first-child { r:5; stroke-width:3; }
+  .analytics-trend-hit { cursor:pointer; }
+  .analytics-day-detail-row:hover { background:#f8fafc; }
+
+/* === 趋势图自定义悬浮提示 === */
   .trend-chart-wrap { position: relative; }
   .trend-tooltip {
     position: absolute;
@@ -137,7 +143,43 @@
   .sortable-th.sort-desc .tri-down { border-top-color: #2563eb; }
   .sortable-th.sort-desc .tri-up { border-bottom-color: #cbd5e1; }
 
-  /* === 热点中心：适配度高亮 === */
+  /* === 工作台红点 / 热点过期 === */
+  .todo-dot {
+    position:absolute;
+    top:10px;
+    right:10px;
+    min-width:18px;
+    height:18px;
+    padding:0 5px;
+    border-radius:999px;
+    background:#ef4444;
+    color:#fff;
+    font-size:11px;
+    font-weight:700;
+    line-height:18px;
+    text-align:center;
+    box-shadow:0 0 0 3px #fff;
+  }
+  .hotspot-expired {
+    background:#f8fafc !important;
+    border-color:#e2e8f0 !important;
+    opacity:.82;
+  }
+
+/* === 今日工作台 / 诊断标签 / 同步状态 === */
+  .ops-stat-card { background:#fff; border:1px solid #eef2f7; border-radius:16px; padding:16px; box-shadow:0 1px 3px rgba(15,23,42,0.04); }
+  .ops-mini-list { display:flex; flex-direction:column; gap:10px; }
+  .diag-badge { display:inline-flex; align-items:center; gap:4px; padding:2px 7px; border-radius:999px; font-size:11px; font-weight:500; border:1px solid transparent; white-space:nowrap; }
+  .diag-ok { background:#f0fdf4; color:#16a34a; border-color:#bbf7d0; }
+  .diag-info { background:#eff6ff; color:#2563eb; border-color:#bfdbfe; }
+  .diag-warn { background:#fffbeb; color:#b45309; border-color:#fde68a; }
+  .diag-danger { background:#fef2f2; color:#dc2626; border-color:#fecaca; }
+  .sync-dot { width:8px; height:8px; border-radius:999px; display:inline-block; }
+  .sync-ok { background:#22c55e; box-shadow:0 0 0 3px rgba(34,197,94,.12); }
+  .sync-warn { background:#f59e0b; box-shadow:0 0 0 3px rgba(245,158,11,.12); }
+  .sync-bad { background:#ef4444; box-shadow:0 0 0 3px rgba(239,68,68,.12); }
+
+/* === 热点中心：适配度高亮 === */
   .hotspot-card { position: relative; }
   .hotspot-fit-strong {
     border-color: #fecaca !important;
@@ -245,7 +287,7 @@ tailwind.config = {
 </div>
 
 <!-- ====== Drawer Container ====== -->
-<div id="drawer-overlay" class="fixed inset-0 z-50 drawer-overlay hidden" onclick="COS.ui.closeDrawer()"></div>
+<div id="drawer-overlay" class="fixed inset-0 z-50 drawer-overlay hidden"></div>
 <div id="drawer-box" class="fixed right-0 top-0 h-full w-[560px] max-w-[90vw] bg-white shadow-drawer z-50 overflow-y-auto drawer-enter hidden">
   <!-- JS渲染 -->
 </div>
@@ -277,6 +319,7 @@ C.NAV_GROUPS = [
   {
     label:'内容运营',
     items: [
+      { id:'workbench',    icon:'🏠', label:'工作台',     route:'workbench' },
       { id:'hotspots',     icon:'🔥', label:'热点中心',   route:'hotspots' },
       { id:'inspirations', icon:'💡', label:'灵感池',     route:'inspirations' },
       { id:'topics',       icon:'📋', label:'选题库',     route:'topics' },
@@ -911,7 +954,9 @@ S.getSize = () => 0;
 S._updateIndicator = () => {
   const el = document.getElementById('storage-indicator');
   if(el) {
-    el.innerHTML = '<span class="text-xs text-gray-500">☁️ Supabase</span>';
+    let last = '';
+    try { last = localStorage.getItem('content_os_last_cloud_write') || localStorage.getItem('content_os_last_hotspot_sync') || ''; } catch(_) {}
+    el.innerHTML = '<span class="text-xs text-gray-500">☁️ Supabase</span>' + (last ? '<div class="text-[10px] text-gray-600 mt-0.5">最近同步 '+H.fmtDateTime(last)+'</div>' : '');
   }
 };
 
@@ -1074,6 +1119,7 @@ S._crud = (collection) => {
         }
         console.log('🔍 [INSERT DATA] ' + tbl + ': ' + returned.length + ' 条', returned);
         const final = _toCamel2(returned[0]);
+        try { localStorage.setItem('content_os_last_cloud_write', H.nowISO()); localStorage.setItem('content_os_last_cloud_write_status', 'ok'); } catch(_) {}
         S.db[collection].push(final);
         console.log('✅ [CRUD] '+collection+'.add("'+(item.title||item.content||item.id)+'"): '+before+'→'+S.db[collection].length);
         return final;
@@ -1093,6 +1139,7 @@ S._crud = (collection) => {
         console.log('🔍 [UPDATE RESULT] ' + tbl, res);
         if(res.error) { console.error('❌ [UPDATE ERROR] ' + tbl + ': ' + res.error.message); return null; }
       } catch(e) { console.error('❌ [UPDATE EXCEPTION] ' + tbl + ':', e.message); return null; }
+      try { localStorage.setItem('content_os_last_cloud_write', H.nowISO()); localStorage.setItem('content_os_last_cloud_write_status', 'ok'); } catch(_) {}
       Object.assign(S.db[collection][idx], patch, {updatedAt:H.nowISO()});
       return S.db[collection][idx];
     },
@@ -1111,6 +1158,7 @@ S._crud = (collection) => {
         return;
       }
       // 只有 Supabase 删除成功后才更新本地内存
+      try { localStorage.setItem('content_os_last_cloud_write', H.nowISO()); localStorage.setItem('content_os_last_cloud_write_status', 'ok'); } catch(_) {}
       S.db[collection] = S.db[collection].filter(x => x.id !== id);
       console.log('✅ [CRUD] '+collection+'.remove('+id+'): '+before+'→'+S.db[collection].length);
     },
@@ -1524,8 +1572,13 @@ UI.openModal = (html, opts={}) => new Promise((resolve) => {
   box.querySelectorAll('[data-modal-action]').forEach(btn=>{
     btn.addEventListener('click',()=>UI.closeModal(btn.dataset.modalAction));
   });
-  // 点击 overlay 关闭
-  overlay.onclick = (e) => { if(e.target===overlay) UI.closeModal(null); };
+  // 点击蒙版层关闭弹窗和蒙版
+  box.onclick = (e) => e.stopPropagation();
+  overlay.onclick = (e) => {
+    if(e.target === overlay || !box.contains(e.target)) {
+      UI.closeModal(null);
+    }
+  };
 });
 
 UI.closeModal = (result) => {
@@ -1567,10 +1620,19 @@ UI.openDrawer = (html, opts={}) => {
   box.classList.remove('drawer-enter');
   void box.offsetWidth;
   box.classList.add('drawer-enter');
+  // 点击详情抽屉背后的蒙版层关闭详情和蒙版
+  box.onclick = (e) => e.stopPropagation();
+  overlay.onclick = (e) => {
+    if(e.target === overlay) UI.closeDrawer();
+  };
   // ESC 关闭
   const escHandler = (e) => { if(e.key==='Escape') UI.closeDrawer(); };
   document.addEventListener('keydown', escHandler);
-  _drawerCleanup = () => document.removeEventListener('keydown', escHandler);
+  _drawerCleanup = () => {
+    document.removeEventListener('keydown', escHandler);
+    overlay.onclick = null;
+    box.onclick = null;
+  };
   // 绑定关闭按钮
   box.querySelectorAll('[data-drawer-close]').forEach(btn=>{
     btn.addEventListener('click', ()=>UI.closeDrawer());
@@ -1688,21 +1750,34 @@ P._topicActions = (t) => {
 };
 
 // 构建选题卡片 HTML（精简：仅标题/日期/目标/状态/优先级，策略字段移入Drawer）
+P._topicSourceBadge = (t) => {
+  if(t?.sourcePlatform === 'hotspot' || String(t?.notes || '').includes('来源：热点中心') || (t?.tags||[]).includes('热点')) {
+    return `<span class="cos-tag text-xs text-orange-600 border-orange-200 bg-orange-50">热点生成</span>`;
+  }
+  if(t?.sourceInspirationId) {
+    return `<span class="cos-tag text-xs text-blue-600 border-blue-200 bg-blue-50">灵感转化</span>`;
+  }
+  return '';
+};
+
 P._topicCard = (t) => `
   <div class="cos-card p-3 cursor-pointer group" data-topic-id="${t.id}" data-click-topic="${t.id}">
     <div class="flex items-start justify-between mb-1.5">
-      <span class="text-sm font-medium text-gray-900 line-clamp-2 flex-1">${H.esc(t.title)}</span>
+      <div class="flex-1 min-w-0 pr-1">
+        <span class="text-sm font-medium text-gray-900 line-clamp-2">${H.esc(t.title)}</span>
+      </div>
       <span class="flex-shrink-0 ml-1.5 opacity-0 group-hover:opacity-100 transition-opacity flex gap-0.5">
         ${P._topicActions(t)}
       </span>
     </div>
     <div class="flex flex-wrap items-center gap-1.5">
       ${UI.statusBadge(t.status)}
+      ${P._topicSourceBadge(t)}
       ${t.goal ? `<span class="cos-tag text-xs">${H.esc(t.goal)}</span>` : ''}
       ${t.priority ? `<span class="cos-tag text-xs font-mono">${H.esc(t.priority)}</span>` : ''}
     </div>
     ${t.plannedDate ? `<div class="mt-1.5 text-xs text-gray-400">📅 ${H.showDate(t.plannedDate)}</div>` : ''}
-  </div>`;
+  </div>`
 
 // 构建灵感卡片（点击打开 Drawer，hover 显示快捷操作）
 P._inspCard = (insp) => `
@@ -1730,6 +1805,229 @@ P._inspCard = (insp) => `
     </div>
     <div class="mt-2 text-xs text-gray-400">${H.fmtDate(insp.createdAt)}</div>
   </div>`;
+
+
+// ==================== 今日工作台 / 内容诊断 / 同步状态 ====================
+
+P._metricRate = (num, den) => {
+  num = P._metricNumber(num);
+  den = P._metricNumber(den);
+  return den > 0 ? num / den : 0;
+};
+
+P._contentCompletenessIssues = (c) => {
+  const issues = [];
+  if(!H.getCoverImage(c)) issues.push('缺封面');
+  if(!String(c.bodyText || '').trim()) issues.push('缺正文');
+  if(!String(c.contentLink || '').trim()) issues.push('缺链接');
+  if(!c.publishDate) issues.push('缺发布时间');
+  const m = c.metrics || {};
+  const hasCoreData = ['views','exposure','likes','comments','favorites','shares'].some(k => P._metricNumber(m[k]) > 0);
+  if(!hasCoreData) issues.push('缺数据');
+  return issues;
+};
+
+P._contentDiagnosis = (c) => {
+  const m = c.metrics || {};
+  const views = P._metricNumber(m.views);
+  const exposure = P._metricNumber(m.exposure);
+  const likes = P._metricNumber(m.likes);
+  const comments = P._metricNumber(m.comments);
+  const favorites = P._metricNumber(m.favorites);
+  const shares = P._metricNumber(m.shares);
+  const history = P._trendHistory ? P._trendHistory(c) : P._metricHistory(c);
+  const deltaViews = P._trendDeltaFromHistory ? P._trendDeltaFromHistory(history, 'views') : null;
+  const issues = P._contentCompletenessIssues(c);
+
+  if(issues.length) return {
+    level:'warn',
+    label:'资料不完整',
+    reason:'这篇内容还缺：' + issues.slice(0,3).join('、') + (issues.length>3?'等':''),
+    action:'先补齐链接、正文、封面或导入数据，方便后续复盘。',
+    tags: issues.slice(0,3)
+  };
+
+  if(deltaViews != null && deltaViews >= Math.max(20, views * 0.15)) return {
+    level:'ok',
+    label:'还在增长',
+    reason:`较上次观看量增长 ${H.fmtNum(deltaViews)}，说明内容还有继续被推荐的迹象。`,
+    action:'可以观察 24 小时，适合二创、补充路线或继续跟进同类选题。',
+    tags:['值得跟进','可二创']
+  };
+
+  const viewRate = P._metricRate(views, exposure);
+  const likeRate = P._metricRate(likes, views);
+  const favRate = P._metricRate(favorites, views);
+  const shareRate = P._metricRate(shares, views);
+
+  if(exposure >= 300 && viewRate > 0 && viewRate < 0.12) return {
+    level:'danger',
+    label:'封面/标题弱',
+    reason:`曝光 ${H.fmtNum(exposure)}，但观看率约 ${(viewRate*100).toFixed(1)}%，点击转化偏低。`,
+    action:'优先优化封面标题、首图冲突感和第一句话钩子。',
+    tags:['封面弱','标题弱']
+  };
+
+  if(views >= 100 && favRate < 0.008 && shareRate < 0.004) return {
+    level:'warn',
+    label:'收藏价值低',
+    reason:`观看量 ${H.fmtNum(views)}，但收藏/分享偏低，说明内容可用信息还不够强。`,
+    action:'增加路线、费用、避坑、停车、时间安排等可收藏信息。',
+    tags:['收藏低','干货不足']
+  };
+
+  if(views >= 100 && likeRate < 0.02 && comments < 2) return {
+    level:'warn',
+    label:'互动弱',
+    reason:`观看量 ${H.fmtNum(views)}，但点赞评论偏低，情绪共鸣或互动引导不足。`,
+    action:'补充更具体的情绪场景，结尾加一个低门槛互动问题。',
+    tags:['互动弱','情绪不足']
+  };
+
+  return {
+    level:'info',
+    label:'数据正常',
+    reason:'当前数据没有明显异常，可以继续观察下一次导入后的增长情况。',
+    action:'建议结合增长趋势判断是否复投、二创或归档。',
+    tags:['正常观察']
+  };
+};
+
+P._renderContentDiagBadges = (c) => {
+  const d = P._contentDiagnosis(c);
+  const cls = d.level === 'ok' ? 'diag-ok' : d.level === 'danger' ? 'diag-danger' : d.level === 'warn' ? 'diag-warn' : 'diag-info';
+  return `<div class="mt-1 flex flex-wrap gap-1"><span class="diag-badge ${cls}">${H.esc(d.label)}</span>${(d.tags||[]).slice(0,2).map(t=>`<span class="diag-badge diag-info">${H.esc(t)}</span>`).join('')}</div>`;
+};
+
+P._hotspotFitReason = (h) => {
+  const score = Number(h.fitScore) || 0;
+  const text = `${h.keyword||''} ${h.title||''} ${h.category||''}`;
+  if(score >= 75) return `高适配：这个热点和旅行/城市/自驾的关联强，适合优先生成选题。`;
+  if(score >= 60) return `值得跟进：可以从“${h.keyword || h.title} + 自驾路线/城市打卡/旅行情绪”切入。`;
+  if(/[美食|夜宵|咖啡|夜市]/.test(text)) return '可转城市漫游：适合结合夜市、小吃街、咖啡店和城市一日路线。';
+  if(/[电影|电视剧|综艺|音乐|演唱会]/.test(text)) return '可转取景地/同款路线：适合做“跟着热点去旅行”。';
+  return '适配一般：建议先收藏观察，除非能找到明确的城市、路线或自驾角度。';
+};
+
+P._syncStatus = () => {
+  let lastCloud = '', lastHot = '', hotStatus = '', hotErr = '';
+  try {
+    lastCloud = localStorage.getItem('content_os_last_cloud_write') || '';
+    lastHot = localStorage.getItem('content_os_last_hotspot_sync') || '';
+    hotStatus = localStorage.getItem('content_os_last_hotspot_sync_status') || '';
+    hotErr = localStorage.getItem('content_os_last_hotspot_sync_error') || '';
+  } catch(_) {}
+  const cloudOK = !!S?.db && !!S.db.contents;
+  const hotCloudItems = S?.db?.config?.hotspots;
+  const hotLocal = P._hotspotReadLocal ? P._hotspotReadLocal() : [];
+  const hotSynced = Array.isArray(hotCloudItems) && hotCloudItems.length === hotLocal.length;
+  const level = !cloudOK || hotStatus === 'error' ? 'bad' : (!hotSynced && hotLocal.length ? 'warn' : 'ok');
+  const label = level === 'bad' ? '同步异常' : level === 'warn' ? '部分本地' : '云端正常';
+  const detail = hotStatus === 'error' ? ('热点同步失败：' + (hotErr || '未知原因')) : (hotSynced ? '热点中心已同步到云端' : (hotLocal.length ? '热点中心存在本地数据，正在/等待同步' : '内容数据使用 Supabase'));
+  return { level, label, detail, lastCloud, lastHot, hotLocalCount: hotLocal.length, hotCloudCount: Array.isArray(hotCloudItems)?hotCloudItems.length:0 };
+};
+
+P._renderSyncStatusCard = () => {
+  const s = P._syncStatus();
+  const dot = s.level === 'bad' ? 'sync-bad' : s.level === 'warn' ? 'sync-warn' : 'sync-ok';
+  return `<div class="ops-stat-card">
+    <div class="flex items-center justify-between">
+      <div>
+        <div class="flex items-center gap-2 text-sm font-semibold text-gray-800"><span class="sync-dot ${dot}"></span>${H.esc(s.label)}</div>
+        <div class="text-xs text-gray-500 mt-1">${H.esc(s.detail)}</div>
+      </div>
+      <div class="text-right text-[11px] text-gray-400">
+        <div>内容最近写入：${s.lastCloud ? H.fmtDateTime(s.lastCloud) : '-'}</div>
+        <div>热点最近同步：${s.lastHot ? H.fmtDateTime(s.lastHot) : '-'}</div>
+      </div>
+    </div>
+  </div>`;
+};
+
+P._recentGrowthContents = (limit=5) => {
+  return S.contents.all().map(c => {
+    const h = P._trendHistory ? P._trendHistory(c) : P._metricHistory(c);
+    return { c, delta: P._trendDeltaFromHistory ? (P._trendDeltaFromHistory(h,'views') || 0) : 0 };
+  }).filter(x => x.delta > 0).sort((a,b)=>b.delta-a.delta).slice(0,limit);
+};
+
+P.renderWorkbench = () => {
+  const rawHotspots = P._hotspotLoad ? P._hotspotLoad() : [];
+  const hotspots = rawHotspots.map(h => P._hotspotEffective ? P._hotspotEffective(h) : h);
+  const contents = S.contents.all();
+  const topics = S.topics.all();
+  const today = H.today();
+
+  const expiredHotspots = hotspots.filter(h => h._expired && (h.status||'candidate')==='candidate');
+  const worthHotspots = hotspots.filter(h => !h._expired && (h.status||'candidate')==='candidate' && (Number(h.fitScore)||0) >= 60).sort((a,b)=>(b.fitScore||0)-(a.fitScore||0)).slice(0,5);
+  const pendingTopics = topics.filter(t => ['todo','in_progress','pending_publish'].includes(t.status||'todo')).sort((a,b)=>String(a.priority||'P9').localeCompare(String(b.priority||'P9'))).slice(0,5);
+  const todayPublish = contents.filter(c => c.publishDate === today).slice(0,5);
+  const growth = P._recentGrowthContents(5);
+  const reviewNeeded = contents.map(c => ({c, d:P._contentDiagnosis(c)})).filter(x => ['danger','warn'].includes(x.d.level)).slice(0,5);
+
+  const actionsEl = document.getElementById('page-actions');
+  if(actionsEl) actionsEl.innerHTML = '';
+
+  const statCards = [
+    {label:'值得跟进热点', value:worthHotspots.length, hint:expiredHotspots.length ? `另有 ${expiredHotspots.length} 个已过期` : '60分以上待判断', route:'hotspots', color:'text-emerald-600', dot:worthHotspots.length + expiredHotspots.length},
+    {label:'待执行选题', value:pendingTopics.length, hint:'待做/制作中/待发布', route:'topics', color:'text-blue-600', dot:pendingTopics.length},
+    {label:'今日发布', value:todayPublish.length, hint:'发布时间为今天', route:'calendar', color:'text-purple-600', dot:todayPublish.length},
+    {label:'增长明显', value:growth.length, hint:'较上次观看量增长', route:'contents', color:'text-orange-500', dot:growth.length},
+  ];
+
+  let html = `<div class="space-y-5">
+    <div class="grid grid-cols-2 xl:grid-cols-4 gap-3">
+      ${statCards.map(s=>`<div class="ops-stat-card relative cursor-pointer hover:shadow-card-hover transition" data-route-jump="${s.route}">
+        <div class="text-xs text-gray-500">${s.label}</div>
+        <div class="text-2xl font-bold ${s.color} mt-1">${s.value}</div>
+        <div class="text-xs text-gray-400 mt-1 pr-7">${s.hint}</div>
+      </div>`).join('')}
+    </div>
+
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+      <div class="cos-card p-5">
+        <div class="flex items-center justify-between mb-3"><h3 class="text-sm font-semibold text-gray-800">🔥 值得跟进热点</h3><button class="cos-btn cos-btn-ghost cos-btn-xs" data-route-jump="hotspots">全部</button></div>
+        <div class="ops-mini-list">${worthHotspots.length ? worthHotspots.map(h=>`
+          <div class="rounded-xl border border-gray-100 p-3">
+            <div class="flex items-center gap-2"><div class="text-sm font-semibold text-gray-900 flex-1 truncate">${H.esc(h.keyword||h.title)}</div><span class="diag-badge ${Number(h.fitScore)>=75?'diag-danger':'diag-ok'}">${H.esc(P._hotspotFitLabel(h.fitScore,h.fitLevel))}</span></div>
+            <div class="text-xs text-gray-500 mt-1">${H.esc(P._hotspotFitReason(h))}</div>
+          </div>`).join('') : '<div class="text-sm text-gray-400 py-6 text-center">暂无值得跟进热点</div>'}</div>
+        ${expiredHotspots.length ? `<div class="mt-3 pt-3 border-t border-gray-100 text-xs text-amber-600">还有 ${expiredHotspots.length} 个热点已超过 3 天未处理，已自动降权。<button class="ml-1 underline" data-route-jump="hotspots">去处理</button></div>` : ''}
+      </div>
+
+      <div class="cos-card p-5">
+        <div class="flex items-center justify-between mb-3"><h3 class="text-sm font-semibold text-gray-800">📋 待执行选题</h3><button class="cos-btn cos-btn-ghost cos-btn-xs" data-route-jump="topics">全部</button></div>
+        <div class="ops-mini-list">${pendingTopics.length ? pendingTopics.map(t=>`
+          <div class="flex items-center gap-3 rounded-xl border border-gray-100 p-3">
+            <span class="diag-badge diag-info">${H.esc(t.priority||'P2')}</span>
+            <div class="min-w-0 flex-1"><div class="flex items-center gap-1.5"><div class="text-sm font-semibold text-gray-900 truncate">${H.esc(t.title)}</div>${P._topicSourceBadge ? P._topicSourceBadge(t) : ''}</div><div class="text-xs text-gray-400 mt-0.5">${H.esc(C.TOPIC_STATUS_LABEL[t.status]||t.status||'待做')} · ${H.esc(t.platform||'-')}</div></div>
+          </div>`).join('') : '<div class="text-sm text-gray-400 py-6 text-center">暂无待执行选题</div>'}</div>
+      </div>
+
+      <div class="cos-card p-5">
+        <div class="flex items-center justify-between mb-3"><h3 class="text-sm font-semibold text-gray-800">📈 数据增长明显</h3><button class="cos-btn cos-btn-ghost cos-btn-xs" data-route-jump="contents">全部</button></div>
+        <div class="ops-mini-list">${growth.length ? growth.map(({c,delta})=>`
+          <div class="flex items-center gap-3 rounded-xl border border-gray-100 p-3">
+            <div class="min-w-0 flex-1"><div class="text-sm font-semibold text-gray-900 truncate cursor-pointer" data-content-trend="${H.esc(c.id)}">${H.esc(c.title)}</div><div class="text-xs text-gray-400 mt-0.5">${H.esc(c.platform||'-')} · ${H.showDate(c.publishDate)}</div></div>
+            <span class="diag-badge diag-ok">观看量 +${H.fmtNum(delta)}</span>
+          </div>`).join('') : '<div class="text-sm text-gray-400 py-6 text-center">暂无明显增长内容</div>'}</div>
+      </div>
+
+      <div class="cos-card p-5">
+        <div class="flex items-center justify-between mb-3"><h3 class="text-sm font-semibold text-gray-800">🩺 需要复盘</h3><button class="cos-btn cos-btn-ghost cos-btn-xs" data-route-jump="contents">全部</button></div>
+        <div class="ops-mini-list">${reviewNeeded.length ? reviewNeeded.map(({c,d})=>`
+          <div class="rounded-xl border border-gray-100 p-3">
+            <div class="flex items-center gap-2"><div class="text-sm font-semibold text-gray-900 flex-1 truncate">${H.esc(c.title)}</div><span class="diag-badge ${d.level==='danger'?'diag-danger':'diag-warn'}">${H.esc(d.label)}</span></div>
+            <div class="text-xs text-gray-500 mt-1">${H.esc(d.reason)}</div>
+          </div>`).join('') : '<div class="text-sm text-gray-400 py-6 text-center">暂无需要重点复盘的内容</div>'}</div>
+      </div>
+    </div>
+  </div>`;
+
+  document.getElementById('page-body').innerHTML = html;
+  document.querySelectorAll('[data-route-jump]').forEach(el => el.onclick = () => R.navigate(el.dataset.routeJump));
+  document.querySelectorAll('[data-content-trend]').forEach(el => el.onclick = () => P._openContentTrendModal(el.dataset.contentTrend));
+};
 
 // ==================== 热点中心 ====================
 
@@ -1762,9 +2060,11 @@ P._hotspotSyncToCloud = async (items) => {
       if(error) {
         console.warn('热点云端保存失败：', error.message);
         UI?.toast?.('热点已保存到本地，但云端同步失败：' + error.message, 'error');
+        try { localStorage.setItem('content_os_last_hotspot_sync_status', 'error'); localStorage.setItem('content_os_last_hotspot_sync_error', error.message); } catch(_) {}
         return false;
       }
       console.log('✅ 热点云端已保存：', safeItems.length, '条');
+      try { localStorage.setItem('content_os_last_hotspot_sync', H.nowISO()); localStorage.setItem('content_os_last_hotspot_sync_status', 'ok'); } catch(_) {}
       return true;
     }
     console.warn('热点云端保存跳过：SUPABASE 未初始化');
@@ -1772,6 +2072,7 @@ P._hotspotSyncToCloud = async (items) => {
   } catch(e) {
     console.warn('热点云端保存异常', e);
     UI?.toast?.('热点已保存到本地，但云端同步异常：' + e.message, 'error');
+    try { localStorage.setItem('content_os_last_hotspot_sync_status', 'error'); localStorage.setItem('content_os_last_hotspot_sync_error', e.message); } catch(_) {}
     return false;
   }
 };
@@ -1866,6 +2167,7 @@ P._normalizeHotspotItem = (raw, platform, idx=0) => {
     sourceUrl: P._hotspotNormText(raw.url || raw.link || raw.shareUrl || raw.share_url || raw.href || raw.uri || ''),
     fitScore: fit.score,
     fitLevel: fit.level,
+    fitReason: P._hotspotNormText(raw.fitReason || raw.fit_reason || ''),
     angle: P._hotspotNormText(raw.angle || raw.reason || raw.note || fit.angle),
     status: 'candidate',
     source: raw._source || 'api',
@@ -1912,7 +2214,31 @@ P._mergeHotspots = async (newItems) => {
   return { added, updated, total: merged.length, cloudOK: !!saveResult.cloudOK };
 };
 
-P._hotspotStatusLabel = (s) => ({candidate:'待判断', saved_inspiration:'已存灵感', saved_topic:'已生成选题', ignored:'已忽略'}[s] || s || '待判断');
+
+P._hotspotAgeDays = (h) => {
+  const raw = h?.updatedAt || h?.fetchedAt || h?.createdAt;
+  const d = raw ? new Date(raw) : null;
+  if(!d || isNaN(d.getTime())) return 0;
+  return Math.floor((Date.now() - d.getTime()) / 86400000);
+};
+P._hotspotIsExpired = (h) => {
+  const status = h?.status || 'candidate';
+  return status === 'candidate' && P._hotspotAgeDays(h) >= 3;
+};
+P._hotspotEffective = (h) => {
+  const item = { ...(h || {}) };
+  if(P._hotspotIsExpired(item)) {
+    item._expired = true;
+    item._ageDays = P._hotspotAgeDays(item);
+    item.fitScoreRaw = item.fitScore;
+    item.fitScore = Math.min(Number(item.fitScore)||0, 49);
+    item.fitLevel = '低';
+    if(!item.fitReason) item.fitReason = '超过 3 天未处理，热点新鲜度下降，已自动降权。建议重新评估、转为灵感或忽略。';
+  }
+  return item;
+};
+
+P._hotspotStatusLabel = (s) => ({candidate:'待判断', expired:'已过期', saved_inspiration:'已存灵感', saved_topic:'已生成选题', ignored:'已忽略'}[s] || s || '待判断');
 P._hotspotFitClass = (level) => level === '高' ? 'bg-red-50 text-red-600 border-red-100' : level === '中' ? 'bg-amber-50 text-amber-600 border-amber-100' : 'bg-gray-50 text-gray-500 border-gray-100';
 P._hotspotFitBadgeClass = (score, level) => {
   score = Number(score) || 0;
@@ -1935,16 +2261,22 @@ P._hotspotCardClass = (score) => {
 };
 
 P.renderHotspots = () => {
-  const all = P._hotspotLoad();
+  const rawAll = P._hotspotLoad();
+  const all = rawAll.map(P._hotspotEffective);
   const cfg = P._hotspotGetConfig();
   let items = all;
   if(P._hotspotPlatform !== 'all') items = items.filter(x => x.platform === P._hotspotPlatform);
-  if(P._hotspotFilter !== 'all') items = items.filter(x => (x.status || 'candidate') === P._hotspotFilter);
+  if(P._hotspotFilter !== 'all') {
+    if(P._hotspotFilter === 'expired') items = items.filter(x => x._expired);
+    else if(P._hotspotFilter === 'candidate') items = items.filter(x => (x.status || 'candidate') === 'candidate' && !x._expired);
+    else items = items.filter(x => (x.status || 'candidate') === P._hotspotFilter);
+  }
   if(P._hotspotSearch) {
     const q = P._hotspotSearch.toLowerCase();
     items = items.filter(x => JSON.stringify(x).toLowerCase().includes(q));
   }
   items = items.sort((a,b) => {
+    if((a._expired?1:0) !== (b._expired?1:0)) return (a._expired?1:0) - (b._expired?1:0);
     const s = (b.fitScore || 0) - (a.fitScore || 0);
     if(s !== 0) return s;
     return String(a.rank || '').localeCompare(String(b.rank || ''), 'zh-CN', {numeric:true});
@@ -1952,8 +2284,9 @@ P.renderHotspots = () => {
 
   const stats = {
     total: all.length,
-    candidate: all.filter(x => (x.status || 'candidate') === 'candidate').length,
-    high: all.filter(x => (Number(x.fitScore)||0) >= 60).length,
+    candidate: all.filter(x => (x.status || 'candidate') === 'candidate' && !x._expired).length,
+    expired: all.filter(x => x._expired).length,
+    high: all.filter(x => !x._expired && (Number(x.fitScore)||0) >= 60).length,
     saved: all.filter(x => ['saved_inspiration','saved_topic'].includes(x.status)).length,
   };
 
@@ -1964,10 +2297,11 @@ P.renderHotspots = () => {
     <button class="cos-btn cos-btn-secondary cos-btn-sm" id="btn-hotspot-import">📥 Excel/CSV导入</button>`;
 
   let html = `<div class="space-y-4">
-    <div class="grid grid-cols-4 gap-3">
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
       <div class="cos-card p-3"><div class="text-xs text-gray-500">热点总数</div><div class="text-lg font-semibold text-gray-900">${stats.total}</div></div>
       <div class="cos-card p-3"><div class="text-xs text-gray-500">待判断</div><div class="text-lg font-semibold text-brand-600">${stats.candidate}</div></div>
       <div class="cos-card p-3"><div class="text-xs text-gray-500">值得跟进</div><div class="text-lg font-semibold text-emerald-600">${stats.high}</div></div>
+      <div class="cos-card p-3"><div class="text-xs text-gray-500">已过期</div><div class="text-lg font-semibold text-amber-600">${stats.expired}</div></div>
       <div class="cos-card p-3"><div class="text-xs text-gray-500">已转化</div><div class="text-lg font-semibold text-emerald-600">${stats.saved}</div></div>
     </div>
 
@@ -1976,7 +2310,7 @@ P.renderHotspots = () => {
         ${['all','抖音','小红书'].map(p=>`<button class="px-3 py-1 rounded-md text-xs font-medium ${P._hotspotPlatform===p?'bg-white shadow-sm text-gray-900':'text-gray-500 hover:text-gray-700'}" data-hot-platform="${p}">${p==='all'?'全部平台':p}</button>`).join('')}
       </div>
       <div class="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5">
-        ${[{k:'all',l:'全部'},{k:'candidate',l:'待判断'},{k:'saved_inspiration',l:'已存灵感'},{k:'saved_topic',l:'已生成选题'},{k:'ignored',l:'已忽略'}].map(f=>`<button class="px-3 py-1 rounded-md text-xs font-medium ${P._hotspotFilter===f.k?'bg-white shadow-sm text-gray-900':'text-gray-500 hover:text-gray-700'}" data-hot-filter="${f.k}">${f.l}</button>`).join('')}
+        ${[{k:'all',l:'全部'},{k:'candidate',l:'待判断'},{k:'expired',l:'已过期'},{k:'saved_inspiration',l:'已存灵感'},{k:'saved_topic',l:'已生成选题'},{k:'ignored',l:'已忽略'}].map(f=>`<button class="px-3 py-1 rounded-md text-xs font-medium ${P._hotspotFilter===f.k?'bg-white shadow-sm text-gray-900':'text-gray-500 hover:text-gray-700'}" data-hot-filter="${f.k}">${f.l}</button>`).join('')}
       </div>
       <input class="cos-input max-w-xs ml-auto" id="hotspot-search" placeholder="搜索热点、分类、角度" value="${H.esc(P._hotspotSearch || '')}">
     </div>`;
@@ -1986,7 +2320,7 @@ P.renderHotspots = () => {
   } else {
     html += `<div class="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-3">`;
     items.forEach(h => {
-      html += `<div class="cos-card hotspot-card ${P._hotspotCardClass(h.fitScore)} p-4 h-full flex flex-col">
+      html += `<div class="cos-card hotspot-card ${h._expired?'hotspot-expired':P._hotspotCardClass(h.fitScore)} p-4 h-full flex flex-col">
         <div class="min-w-0 flex-1">
           <div class="flex flex-wrap items-center gap-2 mb-1.5">
             <span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">${H.esc(h.platform || '-')}</span>
@@ -1994,12 +2328,15 @@ P.renderHotspots = () => {
             ${h.participants ? `<span class="text-xs text-gray-400">参与 ${P._hotspotFormatNumberText(Number(h.participants)||h.participants)}</span>` : ''}
             ${h.views ? `<span class="text-xs text-gray-400">浏览 ${P._hotspotFormatNumberText(Number(h.views)||h.views)}</span>` : (h.heat ? `<span class="text-xs text-gray-400">热度 ${P._hotspotFormatNumberText(Number(h.heat)||h.heat)}</span>` : '')}
             <span class="text-xs px-2 py-0.5 rounded-full border ${P._hotspotFitBadgeClass(h.fitScore, h.fitLevel)}">${H.esc(P._hotspotFitLabel(h.fitScore, h.fitLevel))}</span>
-            <span class="text-xs text-gray-400">${P._hotspotStatusLabel(h.status)}</span>
+            ${h._expired ? `<span class="diag-badge diag-warn">已过期 · ${h._ageDays}天</span>` : `<span class="text-xs text-gray-400">${P._hotspotStatusLabel(h.status)}</span>`}
           </div>
           <div class="text-sm font-semibold text-gray-900 mb-1 line-clamp-2">${H.esc(h.keyword || h.title)}</div>
           ${h.title && h.title !== h.keyword ? `<div class="text-xs text-gray-500 mb-1 line-clamp-2">${H.esc(h.title)}</div>` : ''}
           ${h.heatText ? `<div class="text-xs text-gray-400 mb-1">${H.esc(h.heatText)}</div>` : ''}
           <div class="text-xs text-gray-600 leading-5 line-clamp-2">${H.esc(h.angle || '')}</div>
+          <div class="mt-2 rounded-lg ${h._expired?'bg-amber-50 border-amber-100 text-amber-700':'bg-blue-50/70 border-blue-100 text-blue-700'} border px-2.5 py-2 text-[11px] leading-5">
+            <span class="font-semibold">适配理由：</span>${H.esc(h.fitReason || P._hotspotFitReason(h))}
+          </div>
           <div class="flex flex-wrap items-center gap-1 mt-2">
             ${h.category ? `<span class="cos-tag text-xs">${H.esc(h.category)}</span>` : ''}
             <span class="cos-tag text-xs">热点</span>
@@ -2036,7 +2373,6 @@ P.renderHotspots = () => {
     if(ok) { await P._hotspotSave(P._hotspotLoad().filter(x => x.id !== btn.dataset.hotDelete)); P.renderHotspots(); }
   });
 };
-
 
 P._hotspotFormatNumberText = (n) => {
   if(n === '' || n == null) return '';
@@ -2563,6 +2899,7 @@ P._hotspotToTopic = async (id) => {
     status: 'todo',
     notes: h.sourceUrl ? '来源：' + h.sourceUrl : '来源：热点中心',
     sourcePlatform: 'hotspot',
+    sourceHotspotId: h.id,
     sourceUrl: h.sourceUrl || '',
     createdAt: H.nowISO(),
     updatedAt: H.nowISO()
@@ -2768,7 +3105,7 @@ P.renderTopics = (containerId) => {
         <th style="min-width:200px">标题</th><th>状态</th><th>目标</th><th>优先级</th><th>计划日期</th><th>创建时间</th><th style="width:120px">操作</th>
       </tr></thead><tbody>
       ${pageItems.map(t=>`<tr>
-        <td class="cos-td-title"><div class="title-tooltip"><span class="title-text text-sm font-medium text-gray-900" data-click-topic="${t.id}">${H.esc(H.truncate(t.title,20))}</span><span class="title-tooltip-text">${H.esc(t.title)}</span></div></td>
+        <td class="cos-td-title"><div class="title-tooltip"><span class="title-text text-sm font-medium text-gray-900" data-click-topic="${t.id}">${H.esc(H.truncate(t.title,20))}</span><span class="title-tooltip-text">${H.esc(t.title)}</span></div><div class="mt-1 text-xs">${P._topicSourceBadge(t)}</div></td>
         <td>${UI.statusBadge(t.status)}</td>
         <td><span class="cos-tag text-xs">${H.esc(t.goal||'-')}</span></td>
         <td><span class="cos-tag text-xs font-mono">${H.esc(t.priority||'-')}</span></td>
@@ -3975,7 +4312,7 @@ P.renderContents = (containerId) => {
       ${pageItems.map(c=>{
         return `<tr>
         <td>${(()=>{const img=H.getCoverImage(c);return img?`<img src="${img}" class="img-thumb" loading="lazy">`:'<div class="w-10 h-10 rounded-md bg-gray-100 flex items-center justify-center text-gray-400 text-xs">暂无</div>';})()}</td>
-        <td class="cos-td-title"><div class="title-tooltip"><span class="title-text text-sm font-medium text-gray-900" data-view-content="${c.id}">${H.esc(H.truncate(c.title,20))}</span><span class="title-tooltip-text">${H.esc(c.title)}</span></div></td>
+        <td class="cos-td-title"><div class="title-tooltip"><span class="title-text text-sm font-medium text-gray-900" data-view-content="${c.id}">${H.esc(H.truncate(c.title,20))}</span></div></td>
         <td><span class="cos-tag">${H.esc(c.platform)}</span></td>
         <td class="text-xs text-gray-500 whitespace-nowrap">${H.showDate(c.publishDate)}</td>
         <td class="text-xs text-gray-600 font-mono tabular-nums">${P._renderMetricCell(c,'views','data-views-edit="'+H.esc(c.id)+'" data-placeholder="0"')}</td>
@@ -4195,6 +4532,10 @@ P._openContentDrawer = (contentId) => {
             <div class="cos-card p-3 text-center"><div class="text-xs text-gray-400">投流</div><div class="text-sm font-semibold mt-1">¥${c.metrics?.adCost||0}</div></div>
           </div>
         </div>
+        <div>
+          <h3 class="text-sm font-semibold text-gray-800 mb-3">🩺 数据诊断</h3>
+          ${(()=>{ const d=P._contentDiagnosis(c); const cls=d.level==='ok'?'diag-ok':d.level==='danger'?'diag-danger':d.level==='warn'?'diag-warn':'diag-info'; return `<div class="rounded-xl border border-gray-100 bg-gray-50/60 p-4"><div class="flex items-center gap-2 mb-2"><span class="diag-badge ${cls}">${H.esc(d.label)}</span>${(d.tags||[]).map(t=>`<span class="diag-badge diag-info">${H.esc(t)}</span>`).join('')}</div><div class="text-sm text-gray-700 leading-6">${H.esc(d.reason)}</div><div class="text-xs text-gray-500 mt-2">建议：${H.esc(d.action)}</div></div>`; })()}
+        </div>
         ${P._renderMetricHistoryPanel(c)}
         <div class="text-xs text-gray-400 mt-4">创建：${H.fmtDateTime(c.createdAt)}</div>
       </div>
@@ -4366,173 +4707,327 @@ P._openContentEditModal = async (contentId) => {
 
 // ==================== 内容日历页面 ====================
 
-P._calWeekStart = H.mondayOf(new Date()); // 当前周周一
 
-P.renderCalendar = (containerId) => {
-  const target = containerId||'page-body';
-  const all = S.contents.all();
+P._calView = P._calView || 'week'; // all | week | month | year
+P._calCurrentDate = P._calCurrentDate || H.today();
+
+P._calDateObj = (v) => {
+  const s = H.parseDate(v) || String(v || '').slice(0,10);
+  const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(m) return new Date(Number(m[1]), Number(m[2])-1, Number(m[3]));
+  const d = new Date(v || Date.now());
+  return isNaN(d.getTime()) ? new Date() : d;
+};
+
+P._calAdd = (dateStr, type, step) => {
+  const d = P._calDateObj(dateStr);
+  if(type === 'week') d.setDate(d.getDate() + step * 7);
+  else if(type === 'month') d.setMonth(d.getMonth() + step);
+  else if(type === 'year') d.setFullYear(d.getFullYear() + step);
+  return H.fmtDate(d);
+};
+
+P._calRange = () => {
+  const d = P._calDateObj(P._calCurrentDate);
+  if(P._calView === 'week') {
+    const start = H.mondayOf(d);
+    const sd = P._calDateObj(start);
+    const ed = new Date(sd);
+    ed.setDate(sd.getDate() + 6);
+    return { start, end:H.fmtDate(ed), label:`${start} ~ ${H.fmtDate(ed)}` };
+  }
+  if(P._calView === 'month') {
+    const y = d.getFullYear(), m = d.getMonth();
+    const start = H.fmtDate(new Date(y, m, 1));
+    const end = H.fmtDate(new Date(y, m + 1, 0));
+    return { start, end, label:`${y}年${m+1}月` };
+  }
+  if(P._calView === 'year') {
+    const y = d.getFullYear();
+    return { start:`${y}-01-01`, end:`${y}-12-31`, label:`${y}年` };
+  }
+  return { start:'0000-01-01', end:'9999-12-31', label:'全部内容' };
+};
+
+P._calGroupByDate = (items) => {
+  const byDate = {};
+  (items||[]).forEach(c=>{
+    const date = H.parseDate(c.publishDate);
+    if(!date) return;
+    if(!byDate[date]) byDate[date]=[];
+    byDate[date].push(c);
+  });
+  Object.values(byDate).forEach(arr=>arr.sort((a,b)=>String(a.publishTime||'').localeCompare(String(b.publishTime||''))));
+  return byDate;
+};
+
+P._calContentMiniCard = (c) => {
+  const statusColor = {todo:'border-l-gray-300',in_progress:'border-l-blue-400',pending_publish:'border-l-amber-400',published:'border-l-green-400',discarded:'border-l-red-400'};
+  const status = c.topicId ? (S.topics.get(c.topicId)||{}).status : 'published';
+  return `<div class="cos-card p-1.5 border-l-2 ${statusColor[status]||'border-l-gray-300'} cursor-pointer text-xs hover:shadow-sm transition-shadow" data-cal-content="${H.esc(c.id)}">
+    <div class="text-gray-800 line-clamp-1 font-medium">${H.esc(H.truncate(c.title,18))}</div>
+    <div class="flex items-center gap-1 mt-0.5">
+      <span class="text-gray-400">${H.esc(c.platform||'-')}</span>
+      <span class="text-gray-300">·</span>
+      <span class="text-gray-400">${H.esc(c.publishTime||'--:--')}</span>
+    </div>
+  </div>`;
+};
+
+P._openCalendarPublishModal = (date, target) => {
+  const topics = S.topics.all().filter(t=>t.status!=='published'&&t.status!=='discarded');
+  if(topics.length===0) {
+    UI.toast('没有可发布的选题，请先在选题库创建','error');
+    return;
+  }
+  const topicOpts = topics.map(t=>`<option value="${H.esc(t.id)}">${H.esc(t.title)}</option>`).join('');
+  const html2 = `<div class="p-6">
+    <h2 class="text-base font-semibold text-gray-900 mb-4">新建内容 · ${date}</h2>
+    <form id="cal-publish-form" class="space-y-3">
+      <div><label class="cos-label">选题</label><select class="cos-select" name="topicId" id="cal-topic-select">${topicOpts}</select></div>
+      <div class="grid grid-cols-2 gap-4">
+        <div>${UI.renderField('平台','platform','select','',S.config.getPlatforms(),'选择平台')}</div>
+        <div>${UI.renderField('发布时间','publishTime','time','')}</div>
+      </div>
+      <div>${UI.renderField('封面图','coverImage','image','')}</div>
+      <div>${UI.renderField('发布截图','publishScreenshot','image','')}</div>
+      <div>${UI.renderField('正文内容','bodyText','textarea','',null,'粘贴正文')}</div>
+      <div class="flex justify-end gap-3 pt-2">
+        <button type="button" class="cos-btn cos-btn-secondary" data-modal-action="cancel">取消</button>
+        <button type="button" class="cos-btn cos-btn-primary" id="cal-publish-save-btn">确认发布</button>
+      </div>
+    </form>
+  </div>`;
+  const modalP = UI.openModal(html2);
+  setTimeout(()=>{
+    document.querySelectorAll('[data-pick-image]').forEach(pb=>{
+      pb.onclick=async(ev)=>{ev.stopPropagation();
+        const fn=pb.dataset.pickImage; const field=pb.closest('[data-image-field]');
+        const b64=await UI.pickImage(); if(b64){
+          const h=field.querySelector('input[type="hidden"]'); if(h)h.value=b64;
+          const prev=field.querySelector('.relative'); if(prev)prev.remove();
+          const np=document.createElement('div'); np.className='relative';
+          np.innerHTML='<img src="'+b64+'" class="img-preview" style="max-width:200px;"><button type="button" class="absolute top-1 right-1 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center" data-remove-image="'+fn+'">×</button>';
+          pb.before(np); np.querySelector('button').onclick=()=>{np.remove();h.value='';pb.textContent='选择图片';};
+          pb.textContent='更换图片';
+        }
+      };
+    });
+    const saveBtn = document.getElementById('cal-publish-save-btn');
+    if(saveBtn) saveBtn.onclick=()=>{
+      const form=document.getElementById('cal-publish-form');
+      const data=UI.readForm(form);
+      if(!data.platform){UI.toast('请选择平台','error');return;}
+      data.publishDate=date;
+      UI.closeModal(data);
+    };
+  },50);
+  modalP.then(async result=>{if(!result||result==='cancel')return;
+    const tid=result.topicId; delete result.topicId;
+    await S.publishTopic(tid,result);
+    UI.toast('发布成功！');
+    P.renderCalendar(target);
+  });
+};
+
+P._renderCalendarWeek = (all, byDate, target) => {
   const today = H.today();
-
-  // 计算周范围
-  const monday = new Date(P._calWeekStart);
+  const range = P._calRange();
+  const monday = P._calDateObj(range.start);
   const days = [];
   for(let i=0; i<7; i++) {
     const d = new Date(monday);
     d.setDate(monday.getDate() + i);
     const dateStr = H.fmtDate(d);
     const dowLabel = ['日','一','二','三','四','五','六'][d.getDay()];
-    days.push({ date:dateStr, label:`${d.getMonth()+1}/${d.getDate()}`, dow:dowLabel, isToday:dateStr===today, dayIdx:d.getDay() });
+    days.push({ date:dateStr, label:`${d.getMonth()+1}/${d.getDate()}`, dow:dowLabel, isToday:dateStr===today });
   }
-
-  // 按日期分组内容
-  const byDate = {};
-  all.forEach(c=>{
-    if(!c.publishDate) return;
-    if(!byDate[c.publishDate]) byDate[c.publishDate]=[];
-    byDate[c.publishDate].push(c);
-  });
-  // 每组内按 publishTime 排序
-  Object.values(byDate).forEach(arr=>H.sortBy(arr,'publishTime',false));
-
-  // 统计
-  const weekCount = all.filter(c=>c.publishDate>=days[0].date&&c.publishDate<=days[6].date).length;
-
-  let html = '';
-
-  // --- 顶部统计 + 导航 ---
-  html += `<div class="flex items-center justify-between mb-4">
-    <div class="flex items-center gap-2 text-xs text-gray-400">
-      <span>${days[0].date} ~ ${days[6].date}</span>
-      <span class="text-gray-300">|</span>
-      <span>${weekCount} 条内容</span>
-    </div>
-    <div class="flex items-center gap-1">
-      <button class="cos-btn cos-btn-secondary cos-btn-xs" id="cal-prev-week">← 上周</button>
-      <button class="cos-btn cos-btn-ghost cos-btn-xs" id="cal-today">今天</button>
-      <button class="cos-btn cos-btn-secondary cos-btn-xs" id="cal-next-week">下周 →</button>
-    </div>
-  </div>`;
-
-  // --- 7 列日历网格 ---
-  html += `<div class="grid grid-cols-7 gap-2 mb-4">`;
-  // 表头
+  let html = `<div class="grid grid-cols-7 gap-2 mb-4">`;
   days.forEach(d=>{
     html += `<div class="text-center py-2 rounded-lg ${d.isToday?'bg-brand-50 border border-brand-200':''}">
       <div class="text-xs text-gray-400">周${d.dow}</div>
       <div class="text-sm font-semibold ${d.isToday?'text-brand-600':'text-gray-700'}">${d.label}</div>
     </div>`;
   });
-  html += `</div>`;
-
-  // 内容行
-  html += `<div class="grid grid-cols-7 gap-2">`;
+  html += `</div><div class="grid grid-cols-7 gap-2">`;
   days.forEach(d=>{
     const items = byDate[d.date] || [];
-    html += `<div class="cos-card p-2 space-y-1.5 min-h-[120px] cursor-pointer ${d.isToday?'ring-1 ring-brand-200':''}" style="border-radius:10px;" data-cal-day="${d.date}">
-      ${items.length===0
-        ? `<div class="text-center py-6 text-xs text-gray-300">+ 新建</div>`
-        : items.map(c=>{
-            const statusColor = {todo:'border-l-gray-300',in_progress:'border-l-blue-400',pending_publish:'border-l-amber-400',published:'border-l-green-400',discarded:'border-l-red-400'};
-            const status = c.topicId ? (S.topics.get(c.topicId)||{}).status : 'published';
-            return `<div class="cos-card p-1.5 border-l-2 ${statusColor[status]||'border-l-gray-300'} cursor-pointer text-xs hover:shadow-sm transition-shadow" data-cal-content="${c.id}">
-              <div class="text-gray-800 line-clamp-1 font-medium">${H.esc(H.truncate(c.title,16))}</div>
-              <div class="flex items-center gap-1 mt-0.5">
-                <span class="text-gray-400">${H.esc(c.platform)}</span>
-                <span class="text-gray-300">·</span>
-                <span class="text-gray-400">${c.publishTime||'--:--'}</span>
-              </div>
-            </div>`;
-          }).join('')}
+    html += `<div class="cos-card p-2 space-y-1.5 min-h-[140px] cursor-pointer ${d.isToday?'ring-1 ring-brand-200':''}" style="border-radius:10px;" data-cal-day="${d.date}">
+      ${items.length===0 ? `<div class="text-center py-8 text-xs text-gray-300">+ 新建</div>` : items.map(P._calContentMiniCard).join('')}
     </div>`;
   });
+  html += `</div>`;
+  return html;
+};
+
+P._renderCalendarMonth = (all, byDate, target) => {
+  const today = H.today();
+  const d = P._calDateObj(P._calCurrentDate);
+  const y = d.getFullYear(), m = d.getMonth();
+  const first = new Date(y, m, 1);
+  const start = new Date(first);
+  start.setDate(first.getDate() - ((first.getDay()+6)%7)); // 周一开始
+  const cells = [];
+  for(let i=0; i<42; i++) {
+    const cd = new Date(start);
+    cd.setDate(start.getDate() + i);
+    const dateStr = H.fmtDate(cd);
+    cells.push({ date:dateStr, day:cd.getDate(), inMonth:cd.getMonth()===m, isToday:dateStr===today });
+  }
+  let html = `<div class="grid grid-cols-7 gap-2 mb-2">${['一','二','三','四','五','六','日'].map(x=>`<div class="text-center text-xs text-gray-400 py-1">周${x}</div>`).join('')}</div>`;
+  html += `<div class="grid grid-cols-7 gap-2">`;
+  cells.forEach(cell=>{
+    const items = byDate[cell.date] || [];
+    html += `<div class="cos-card p-2 min-h-[112px] cursor-pointer ${cell.isToday?'ring-1 ring-brand-200':''} ${cell.inMonth?'bg-white':'bg-gray-50/60'}" data-cal-day="${cell.date}">
+      <div class="flex items-center justify-between mb-1">
+        <span class="text-xs font-semibold ${cell.isToday?'text-brand-600':cell.inMonth?'text-gray-700':'text-gray-300'}">${cell.day}</span>
+        ${items.length?`<span class="text-[10px] text-gray-400">${items.length}篇</span>`:''}
+      </div>
+      <div class="space-y-1">${items.slice(0,3).map(P._calContentMiniCard).join('')}${items.length>3?`<div class="text-[10px] text-gray-400 pl-1">+${items.length-3} 更多</div>`:''}</div>
+    </div>`;
+  });
+  html += `</div>`;
+  return html;
+};
+
+P._renderCalendarYear = (all, byDate, target) => {
+  const d = P._calDateObj(P._calCurrentDate);
+  const y = d.getFullYear();
+  let html = `<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">`;
+  for(let month=0; month<12; month++) {
+    const start = `${y}-${String(month+1).padStart(2,'0')}-01`;
+    const end = H.fmtDate(new Date(y, month+1, 0));
+    const items = all.filter(c=>c.publishDate>=start && c.publishDate<=end).sort((a,b)=>String(a.publishDate||'').localeCompare(String(b.publishDate||'')));
+    const platforms = {};
+    items.forEach(c=>{ platforms[c.platform||'未知'] = (platforms[c.platform||'未知']||0)+1; });
+    html += `<div class="cos-card p-4 hover:shadow-card-hover transition cursor-pointer" data-cal-jump-month="${start}">
+      <div class="flex items-center justify-between mb-3">
+        <div class="text-base font-semibold text-gray-900">${month+1}月</div>
+        <span class="diag-badge ${items.length?'diag-info':'diag-ok'}">${items.length} 篇</span>
+      </div>
+      <div class="flex flex-wrap gap-1 mb-3">${Object.entries(platforms).slice(0,4).map(([k,v])=>`<span class="cos-tag">${H.esc(k)} ${v}</span>`).join('') || '<span class="text-xs text-gray-300">暂无内容</span>'}</div>
+      <div class="space-y-1.5">${items.slice(0,4).map(c=>`<div class="text-xs text-gray-600 truncate cursor-pointer" data-cal-content="${H.esc(c.id)}">${H.showDate(c.publishDate)} · ${H.esc(c.title)}</div>`).join('')}${items.length>4?`<div class="text-[11px] text-gray-400">+${items.length-4} 更多，点击查看本月</div>`:''}</div>
+    </div>`;
+  }
+  html += `</div>`;
+  return html;
+};
+
+P._renderCalendarAll = (all, byDate, target) => {
+  const items = all.filter(c=>c.publishDate).sort((a,b)=>{
+    const d = String(b.publishDate||'').localeCompare(String(a.publishDate||''));
+    if(d!==0) return d;
+    return String(b.publishTime||'').localeCompare(String(a.publishTime||''));
+  });
+  if(items.length===0) return UI.emptyState('还没有已发布/排期内容');
+  const grouped = {};
+  items.forEach(c=>{
+    const month = String(c.publishDate||'').slice(0,7);
+    if(!grouped[month]) grouped[month]=[];
+    grouped[month].push(c);
+  });
+  let html = `<div class="space-y-4">`;
+  Object.keys(grouped).sort((a,b)=>b.localeCompare(a)).forEach(month=>{
+    const arr = grouped[month];
+    html += `<div class="cos-card overflow-hidden">
+      <div class="px-4 py-3 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+        <div class="text-sm font-semibold text-gray-800">${month}</div>
+        <div class="text-xs text-gray-400">${arr.length} 篇</div>
+      </div>
+      <div class="divide-y divide-gray-100">${arr.map(c=>`<div class="px-4 py-3 flex items-center gap-3 hover:bg-gray-50 cursor-pointer" data-cal-content="${H.esc(c.id)}">
+        <div class="w-20 text-xs text-gray-400">${H.showDate(c.publishDate)} ${H.esc(c.publishTime||'')}</div>
+        <div class="min-w-0 flex-1"><div class="text-sm font-medium text-gray-900 truncate">${H.esc(c.title)}</div><div class="text-xs text-gray-400 mt-0.5">${H.esc(c.platform||'-')} · ${H.esc(c.theme||'-')}</div></div>
+        <div class="text-xs text-gray-400">观看量 ${H.fmtNum(P._metricNumber(c.metrics?.views))}</div>
+      </div>`).join('')}</div>
+    </div>`;
+  });
+  html += `</div>`;
+  return html;
+};
+
+P.renderCalendar = (containerId) => {
+  const target = containerId||'page-body';
+  const all = S.contents.all().map(c=>({ ...c, publishDate:H.parseDate(c.publishDate) || c.publishDate }));
+  const today = H.today();
+  const byDate = P._calGroupByDate(all);
+  const range = P._calRange();
+
+  let scoped = all;
+  if(P._calView !== 'all') scoped = all.filter(c=>c.publishDate>=range.start && c.publishDate<=range.end);
+  const platformCount = {};
+  scoped.forEach(c=>{ platformCount[c.platform||'未知'] = (platformCount[c.platform||'未知']||0)+1; });
+
+  const actionsEl = document.getElementById('page-actions');
+  if(actionsEl) actionsEl.innerHTML = '';
+
+  const tabs = [
+    {k:'week', l:'本周'},
+    {k:'month', l:'本月'},
+    {k:'year', l:'本年'},
+    {k:'all', l:'全部'}
+  ];
+
+  let html = `<div class="space-y-4">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5">
+        ${tabs.map(t=>`<button class="px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${P._calView===t.k?'bg-white shadow-sm text-gray-900':'text-gray-500 hover:text-gray-700'}" data-cal-view="${t.k}">${t.l}</button>`).join('')}
+      </div>
+      <div class="flex items-center gap-2">
+        ${P._calView==='all' ? '' : `<button class="cos-btn cos-btn-secondary cos-btn-xs" id="cal-prev">← 上一${P._calView==='week'?'周':P._calView==='month'?'月':'年'}</button>`}
+        <button class="cos-btn cos-btn-ghost cos-btn-xs" id="cal-today">今天</button>
+        ${P._calView==='all' ? '' : `<button class="cos-btn cos-btn-secondary cos-btn-xs" id="cal-next">下一${P._calView==='week'?'周':P._calView==='month'?'月':'年'} →</button>`}
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div class="cos-card p-3"><div class="text-xs text-gray-500">${P._calView==='all'?'全部范围':range.label}</div><div class="text-lg font-semibold text-gray-900">${scoped.length} 篇</div></div>
+      <div class="cos-card p-3"><div class="text-xs text-gray-500">小红书</div><div class="text-lg font-semibold text-red-500">${platformCount['小红书']||0}</div></div>
+      <div class="cos-card p-3"><div class="text-xs text-gray-500">抖音</div><div class="text-lg font-semibold text-gray-900">${platformCount['抖音']||0}</div></div>
+      <div class="cos-card p-3"><div class="text-xs text-gray-500">今日内容</div><div class="text-lg font-semibold text-brand-600">${all.filter(c=>c.publishDate===today).length}</div></div>
+    </div>`;
+
+  if(P._calView === 'week') html += P._renderCalendarWeek(all, byDate, target);
+  else if(P._calView === 'month') html += P._renderCalendarMonth(all, byDate, target);
+  else if(P._calView === 'year') html += P._renderCalendarYear(all, byDate, target);
+  else html += P._renderCalendarAll(all, byDate, target);
+
   html += `</div>`;
 
   document.getElementById(target).innerHTML = html;
 
-  // 事件
-  document.getElementById('cal-prev-week').onclick = ()=>{
-    const d = new Date(P._calWeekStart);
-    d.setDate(d.getDate()-7);
-    P._calWeekStart = H.fmtDate(d);
-    P.renderCalendar(target);
-  };
-  document.getElementById('cal-next-week').onclick = ()=>{
-    const d = new Date(P._calWeekStart);
-    d.setDate(d.getDate()+7);
-    P._calWeekStart = H.fmtDate(d);
-    P.renderCalendar(target);
-  };
-  document.getElementById('cal-today').onclick = ()=>{
-    P._calWeekStart = H.mondayOf(new Date());
-    P.renderCalendar(target);
-  };
+  document.querySelectorAll('[data-cal-view]').forEach(btn=>{
+    btn.onclick = () => {
+      P._calView = btn.dataset.calView;
+      if(P._calView === 'week') P._calCurrentDate = H.today();
+      P.renderCalendar(target);
+    };
+  });
+  const prev = document.getElementById('cal-prev');
+  if(prev) prev.onclick = () => { P._calCurrentDate = P._calAdd(P._calCurrentDate, P._calView, -1); P.renderCalendar(target); };
+  const next = document.getElementById('cal-next');
+  if(next) next.onclick = () => { P._calCurrentDate = P._calAdd(P._calCurrentDate, P._calView, 1); P.renderCalendar(target); };
+  const todayBtn = document.getElementById('cal-today');
+  if(todayBtn) todayBtn.onclick = () => { P._calCurrentDate = H.today(); if(P._calView==='all') P._calView='week'; P.renderCalendar(target); };
 
-  // 点击内容卡片 → Drawer
   document.querySelectorAll('[data-cal-content]').forEach(b=>{
     b.onclick = (e)=>{ e.stopPropagation(); P._openContentDrawer(b.dataset.calContent); };
   });
-
-  // 点击空日期 → 从选题库发布
   document.querySelectorAll('[data-cal-day]').forEach(b=>{
     b.onclick = (e)=>{
       if(e.target.closest('[data-cal-content]')) return;
-      const date = b.dataset.calDay;
-      const topics = S.topics.all().filter(t=>t.status!=='published'&&t.status!=='discarded');
-      if(topics.length===0) {
-        UI.toast('没有可发布的选题，请先在选题库创建','error');
-        return;
-      }
-      // 简易选题选择器
-      const topicOpts = topics.map(t=>`<option value="${t.id}">${H.esc(t.title)}</option>`).join('');
-      const html2 = `<div class="p-6">
-        <h2 class="text-base font-semibold text-gray-900 mb-4">新建内容 · ${date}</h2>
-        <form id="cal-publish-form" class="space-y-3">
-          <div><label class="cos-label">选题</label><select class="cos-select" name="topicId" id="cal-topic-select">${topicOpts}</select></div>
-          <div class="grid grid-cols-2 gap-4">
-            <div>${UI.renderField('平台','platform','select','',S.config.getPlatforms(),'选择平台')}</div>
-            <div>${UI.renderField('发布时间','publishTime','time','')}</div>
-          </div>
-          <div>${UI.renderField('封面图','coverImage','image','')}</div>
-          <div>${UI.renderField('发布截图','publishScreenshot','image','')}</div>
-          <div>${UI.renderField('正文内容','bodyText','textarea','',null,'粘贴正文')}</div>
-          <div class="flex justify-end gap-3 pt-2">
-            <button type="button" class="cos-btn cos-btn-secondary" data-modal-action="cancel">取消</button>
-            <button type="button" class="cos-btn cos-btn-primary" id="cal-publish-save-btn">确认发布</button>
-          </div>
-        </form>
-      </div>`;
-      const modalP = UI.openModal(html2);
-      setTimeout(()=>{
-        document.querySelectorAll('[data-pick-image]').forEach(pb=>{
-          pb.onclick=async(ev)=>{ev.stopPropagation();
-            const fn=pb.dataset.pickImage; const field=pb.closest('[data-image-field]');
-            const b64=await UI.pickImage(); if(b64){
-              const h=field.querySelector('input[type="hidden"]'); if(h)h.value=b64;
-              const prev=field.querySelector('.relative'); if(prev)prev.remove();
-              const np=document.createElement('div'); np.className='relative';
-              np.innerHTML='<img src="'+b64+'" class="img-preview" style="max-width:200px;"><button type="button" class="absolute top-1 right-1 w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center" data-remove-image="'+fn+'">×</button>';
-              pb.before(np); np.querySelector('button').onclick=()=>{np.remove();h.value='';pb.textContent='选择图片';};
-              pb.textContent='更换图片';
-            }
-          };
-        });
-        document.getElementById('cal-publish-save-btn').onclick=()=>{
-          const form=document.getElementById('cal-publish-form');
-          const data=UI.readForm(form);
-          if(!data.platform){UI.toast('请选择平台','error');return;}
-          data.publishDate=date;
-          UI.closeModal(data);
-        };
-      },50);
-      modalP.then(async result=>{if(!result||result==='cancel')return;
-        const tid=result.topicId; delete result.topicId;
-        await S.publishTopic(tid,result);
-        UI.toast('发布成功！');
-        P.renderCalendar(target);
-      });
+      P._openCalendarPublishModal(b.dataset.calDay, target);
+    };
+  });
+  document.querySelectorAll('[data-cal-jump-month]').forEach(b=>{
+    b.onclick = (e)=>{
+      if(e.target.closest('[data-cal-content]')) return;
+      P._calView = 'month';
+      P._calCurrentDate = b.dataset.calJumpMonth;
+      P.renderCalendar(target);
     };
   });
 };
+
 
 // ==================== 选题库 / 内容库 / 内容日历（独立页面） ====================
 
@@ -6394,39 +6889,47 @@ P.renderAnalytics = () => {
     last30.push(H.fmtDate(d));
   }
   const trendByDay = {};
-  last30.forEach(d=>{ trendByDay[d] = { exposure:0, likes:0, comments:0 }; });
+  const contentsByDay = {};
+  last30.forEach(d=>{ trendByDay[d] = { exposure:0, likes:0, comments:0 }; contentsByDay[d] = []; });
   filtered.forEach(c=>{
-    if(trendByDay[c.publishDate] && m(c)) {
-      trendByDay[c.publishDate].exposure += m(c).exposure||0;
-      trendByDay[c.publishDate].likes += m(c).likes||0;
-      trendByDay[c.publishDate].comments += m(c).comments||0;
+    const day = H.parseDate(c.publishDate) || c.publishDate;
+    if(contentsByDay[day]) contentsByDay[day].push(c);
+    if(trendByDay[day] && m(c)) {
+      trendByDay[day].exposure += m(c).exposure||0;
+      trendByDay[day].likes += m(c).likes||0;
+      trendByDay[day].comments += m(c).comments||0;
     }
   });
 
-  const drawLineChart = (data, key, color) => {
-    const values = data.map(d=>d[key]||0);
+  const drawLineChart = (data, metricKey, color, metricLabel) => {
+    const values = data.map(d=>d.value||0);
     const maxV = Math.max(1, ...values);
-    const W=600, H=200, pad=30, w=W-pad*2, h=H-pad*2;
-    let pts = '';
-    values.forEach((v,i)=>{
+    const W=600, Hh=200, pad=30, w=W-pad*2, h=Hh-pad*2;
+    const points = values.map((v,i)=>{
       const x = pad + (i/(values.length-1))*w;
       const y = pad + h - (v/maxV)*h;
-      pts += (i===0?'M':'L') + x.toFixed(1) + ',' + y.toFixed(1);
+      return { x, y, v, day:data[i].label };
     });
+    const pts = points.map((p,i)=>(i===0?'M':'L') + p.x.toFixed(1) + ',' + p.y.toFixed(1)).join('');
     const area = pts + ' L' + (pad + w).toFixed(1) + ',' + (pad+h) + ' L' + pad + ',' + (pad+h) + ' Z';
-    return `<svg width="100%" viewBox="0 0 ${W} ${H}" class="overflow-visible" style="max-height:200px">
-      <defs><linearGradient id="grad_${key}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${color}" stop-opacity="0.3"/><stop offset="100%" stop-color="${color}" stop-opacity="0.02"/></linearGradient></defs>
-      <path d="${area}" fill="url(#grad_${key})" stroke="none"/>
+    const dots = points.map(p=>`<g class="analytics-trend-point analytics-trend-hit" data-analytics-day="${H.esc(p.day)}" data-analytics-metric="${H.esc(metricKey)}" data-analytics-metric-label="${H.esc(metricLabel)}">
+      <circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3.5" fill="#fff" stroke="${color}" stroke-width="2"/>
+      <circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="12" fill="transparent" stroke="transparent"/>
+    </g>`).join('');
+    return `<svg width="100%" viewBox="0 0 ${W} ${Hh}" class="overflow-visible" style="max-height:200px">
+      <defs><linearGradient id="grad_${metricKey}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${color}" stop-opacity="0.3"/><stop offset="100%" stop-color="${color}" stop-opacity="0.02"/></linearGradient></defs>
+      <path d="${area}" fill="url(#grad_${metricKey})" stroke="none"/>
       <path d="${pts}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      ${dots}
     </svg>`;
   };
 
-  html += '<div class="cos-card p-5 mb-6"><h3 class="text-sm font-semibold text-gray-700 mb-4">📈 近30天趋势</h3>';
+  html += '<div class="cos-card p-5 mb-6"><div class="flex items-center justify-between mb-4"><h3 class="text-sm font-semibold text-gray-700">📈 近30天趋势</h3><span class="text-xs text-gray-400">点击峰值点查看当天内容</span></div>';
   html += '<div class="grid grid-cols-1 md:grid-cols-3 gap-4">';
-  html += `<div><div class="text-xs text-gray-400 mb-1">曝光趋势</div>${drawLineChart(last30.map(d=>({v:trendByDay[d].exposure,label:d})),'v','#3b82f6')}</div>`;
-  html += `<div><div class="text-xs text-gray-400 mb-1">点赞趋势</div>${drawLineChart(last30.map(d=>({v:trendByDay[d].likes,label:d})),'v','#ec4899')}</div>`;
-  html += `<div><div class="text-xs text-gray-400 mb-1">评论趋势</div>${drawLineChart(last30.map(d=>({v:trendByDay[d].comments,label:d})),'v','#10b981')}</div>`;
-  html += '</div></div>';
+  html += `<div><div class="text-xs text-gray-400 mb-1">曝光趋势</div>${drawLineChart(last30.map(d=>({value:trendByDay[d].exposure,label:d})),'exposure','#3b82f6','曝光')}</div>`;
+  html += `<div><div class="text-xs text-gray-400 mb-1">点赞趋势</div>${drawLineChart(last30.map(d=>({value:trendByDay[d].likes,label:d})),'likes','#ec4899','点赞')}</div>`;
+  html += `<div><div class="text-xs text-gray-400 mb-1">评论趋势</div>${drawLineChart(last30.map(d=>({value:trendByDay[d].comments,label:d})),'comments','#10b981','评论')}</div>`;
+  html += '</div><div id="analytics-trend-detail" class="hidden mt-4 rounded-xl border border-dashed border-gray-200 bg-gray-50/60 p-4 text-sm text-gray-400 text-center"></div></div>';
 
   // ============ Section 3: 爆款 TOP10 ============
   const sortLabels = { exposure:'曝光排行', likes:'点赞排行', comments:'评论排行' };
@@ -6444,7 +6947,7 @@ P.renderAnalytics = () => {
     sorted.forEach((c,i)=>{
       html += `<tr>
         <td class="text-xs font-bold ${i<3?'text-amber-500':'text-gray-400'}">${i+1}</td>
-        <td class="cos-td-title"><div class="title-tooltip"><span class="title-text text-sm font-medium text-gray-900 hover:text-blue-600 cursor-pointer" data-content-trend="${H.esc(c.id)}" title="查看增长趋势">${H.esc(H.truncate(c.title,20))}</span><span class="title-tooltip-text">点击查看增长趋势：${H.esc(c.title)}</span></div></td>
+        <td class="cos-td-title"><div class="title-tooltip"><span class="title-text text-sm font-medium text-gray-900 hover:text-blue-600 cursor-pointer" data-content-trend="${H.esc(c.id)}" title="查看增长趋势">${H.esc(H.truncate(c.title,20))}</span></div></td>
         <td><span class="cos-tag">${H.esc(c.platform)}</span></td>
         <td class="text-xs text-gray-400 whitespace-nowrap">${c.publishDate||'-'}</td>
         <td class="text-xs text-gray-600 font-mono">${H.fmtNum(m(c).exposure)}</td>
@@ -6592,6 +7095,50 @@ P.renderAnalytics = () => {
 
   document.getElementById('page-body').innerHTML = html;
 
+  const renderAnalyticsDayDetail = (day, metricKey='exposure', metricLabel='曝光') => {
+    const box = document.getElementById('analytics-trend-detail');
+    if(!box) return;
+    box.classList.remove('hidden');
+    const items = (contentsByDay[day] || []).slice().sort((a,b)=>(parseInt(m(b)[metricKey])||0)-(parseInt(m(a)[metricKey])||0));
+    const total = items.reduce((sum,c)=>sum+(parseInt(m(c)[metricKey])||0),0);
+    if(!items.length) {
+      box.innerHTML = `<div class="text-sm text-gray-500">${H.showDate(day)} 暂无发布内容</div><div class="text-xs text-gray-400 mt-1">这一天没有内容带动${H.esc(metricLabel)}。</div>`;
+      return;
+    }
+    box.innerHTML = `<div class="text-left">
+      <div class="flex items-center justify-between mb-3">
+        <div><div class="text-sm font-semibold text-gray-800">${H.showDate(day)} 发布内容</div><div class="text-xs text-gray-400 mt-0.5">${items.length} 篇内容 · ${H.esc(metricLabel)}合计 ${H.fmtNum(total)}</div></div>
+        <span class="cos-tag">${H.esc(metricLabel)}明细</span>
+      </div>
+      <div class="divide-y divide-gray-100 rounded-xl overflow-hidden bg-white border border-gray-100">
+        ${items.map(c=>`<div class="analytics-day-detail-row px-3 py-2 flex items-center gap-3 cursor-pointer" data-content-trend="${H.esc(c.id)}">
+          <div class="min-w-0 flex-1">
+            <div class="text-sm font-medium text-gray-900 truncate">${H.esc(c.title)}</div>
+            <div class="text-xs text-gray-400 mt-0.5">${H.esc(c.platform||'-')} · ${H.esc(c.publishTime||'--:--')}</div>
+          </div>
+          <div class="grid grid-cols-3 gap-3 text-right text-xs shrink-0">
+            <div><div class="font-semibold text-blue-600">${H.fmtNum(m(c).exposure||0)}</div><div class="text-gray-400">曝光</div></div>
+            <div><div class="font-semibold text-pink-600">${H.fmtNum(m(c).likes||0)}</div><div class="text-gray-400">赞</div></div>
+            <div><div class="font-semibold text-green-600">${H.fmtNum(m(c).comments||0)}</div><div class="text-gray-400">评</div></div>
+          </div>
+        </div>`).join('')}
+      </div>
+    </div>`;
+    box.querySelectorAll('[data-content-trend]').forEach(b=>{
+      b.onclick=(e)=>{ e.stopPropagation(); P._openContentTrendModal(b.dataset.contentTrend); };
+    });
+  };
+
+  document.querySelectorAll('[data-analytics-day]').forEach(point=>{
+    point.onclick = (e) => {
+      e.stopPropagation();
+      document.querySelectorAll('.analytics-trend-point circle:first-child').forEach(c=>c.setAttribute('r','3.5'));
+      const c = point.querySelector('circle:first-child');
+      if(c) c.setAttribute('r','5.5');
+      renderAnalyticsDayDetail(point.dataset.analyticsDay, point.dataset.analyticsMetric, point.dataset.analyticsMetricLabel);
+    };
+  });
+
   // 事件绑定
   document.querySelectorAll('[data-analytics-range]').forEach(b=>{
     b.onclick=()=>{ P._analyticsRange=b.dataset.analyticsRange; P.renderAnalytics(); };
@@ -6607,6 +7154,7 @@ P.renderAnalytics = () => {
 // ==================== 页面路由表 ====================
 
 P.routes = {
+  workbench:() => { P._setHeader('工作台', '今日重点、待办和复盘'); P.renderWorkbench(); },
   inspirations:() => { P._setHeader('灵感池', '记录未成熟的想法 · 择机转为选题'); P.renderInspirations(); },
   hotspots:() => { P._setHeader('热点中心', '粘贴小红书/抖音热点 · 一键沉淀为灵感或选题'); P.renderHotspots(); },
   topics:   () => { P._setHeader('选题库', '管理内容选题与优先级'); P.renderTopicsPage(); },
@@ -6639,7 +7187,7 @@ const R = window.R = {};
 const S = window.S, C = window.C, H = window.H, UI = window.UI;
 
 // --- 当前路由 ---
-R.currentRoute = 'topics';
+R.currentRoute = 'workbench';
 
 // --- 初始化侧边栏（分组渲染） ---
 R.initSidebar = () => {
@@ -6686,7 +7234,7 @@ R.navigate = (route) => {
     return;
   }
 
-  if(!P.routes[route]) route = 'topics';
+  if(!P.routes[route]) route = 'workbench';
   R.currentRoute = route;
   window.location.hash = route;
 
@@ -6697,15 +7245,27 @@ R.navigate = (route) => {
   if(active) active.classList.add('active');
 
   // 渲染页面
-  if(P.routes[route]) P.routes[route]();
+  if(P.routes[route]) {
+    try {
+      P.routes[route]();
+    } catch(err) {
+      console.error('页面渲染失败：', route, err);
+      const titleEl = document.getElementById('page-title');
+      const subEl = document.getElementById('page-subtitle');
+      const bodyEl = document.getElementById('page-body');
+      if(titleEl) titleEl.textContent = '页面加载失败';
+      if(subEl) subEl.textContent = '请把 Console 报错截图发给开发排查';
+      if(bodyEl) bodyEl.innerHTML = '<div class="cos-card p-6 text-sm text-red-600">页面渲染失败：' + (err && err.message ? err.message : err) + '</div>';
+    }
+  }
 };
 
 // --- 监听 hash 变化 ---
 R.init = () => {
-  const hash = window.location.hash.replace('#','') || 'topics';
+  const hash = window.location.hash.replace('#','') || 'workbench';
   R.navigate(hash);
   window.addEventListener('hashchange', () => {
-    const newHash = window.location.hash.replace('#','') || 'content-center';
+    const newHash = window.location.hash.replace('#','') || 'workbench';
     if(newHash !== R.currentRoute) R.navigate(newHash);
   });
 };
