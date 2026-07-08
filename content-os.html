@@ -5384,7 +5384,7 @@ P._renderSettingsTab_Config = () => {
     { key:'hooks', label:'钩子类型', getter: S.config.getHooks, setter: S.config.setHooks },
     { key:'goals', label:'运营目标', getter: S.config.getGoals, setter: S.config.setGoals },
     { key:'platforms', label:'发布平台', getter: S.config.getPlatforms, setter: S.config.setPlatforms },
-    { key:'channels', label:'发布渠道', getter: S.config.getChannels, setter: S.config.setChannels },
+    { key:'channels', label:'分发渠道', getter: S.config.getChannels, setter: S.config.setChannels },
   ];
 
   let html = '<div class="space-y-6">';
@@ -5398,8 +5398,9 @@ P._renderSettingsTab_Config = () => {
       <div class="flex flex-wrap gap-2" id="config-${cfg.key}">
         ${items.map((item,i)=>`
           <span class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700">
-            ${H.esc(item)}
-            <button class="text-gray-400 hover:text-red-500 text-xs" data-delete-config="${cfg.key}" data-index="${i}">×</button>
+            <span>${H.esc(item)}</span>
+            <button class="text-gray-400 hover:text-blue-500 text-xs" data-edit-config="${cfg.key}" data-index="${i}" title="修改">✎</button>
+            <button class="text-gray-400 hover:text-red-500 text-xs" data-delete-config="${cfg.key}" data-index="${i}" title="删除">×</button>
           </span>`).join('')}
       </div>
     </div>`;
@@ -5434,11 +5435,13 @@ P._renderSettingsTab_Config = () => {
   // 事件绑定
   configs.forEach(cfg=>{
     document.querySelectorAll(`[data-add-config="${cfg.key}"]`).forEach(b=>b.onclick=()=>P._addConfigItem(cfg));
-    document.querySelectorAll(`[data-delete-config="${cfg.key}"]`).forEach(b=>b.onclick=()=>{
+    document.querySelectorAll(`[data-edit-config="${cfg.key}"]`).forEach(b=>b.onclick=()=>P._editConfigItem(cfg, parseInt(b.dataset.index)));
+    document.querySelectorAll(`[data-delete-config="${cfg.key}"]`).forEach(b=>b.onclick=async()=>{
       const idx = parseInt(b.dataset.index);
       const items = cfg.getter();
+      if(idx < 0 || idx >= items.length) return;
       items.splice(idx,1);
-      cfg.setter([...items]);
+      await cfg.setter([...items]);
       UI.toast('已删除');
       P._renderSettingsTab_Config();
     });
@@ -5495,6 +5498,66 @@ P._addConfigItem = async (cfg) => {
   UI.toast('已添加');
   P._renderSettingsTab_Config();
 };
+
+P._editConfigItem = async (cfg, idx) => {
+  const items = cfg.getter();
+  if(idx < 0 || idx >= items.length) return;
+  const oldName = items[idx];
+
+  const html = `
+    <div class="p-6">
+      <h2 class="text-base font-semibold text-gray-900 mb-4">修改${cfg.label}</h2>
+      <form id="edit-config-form">
+        <div>${UI.renderField('名称','name','text',oldName,null,'输入新名称')}</div>
+        <div class="flex justify-end gap-3 mt-6">
+          <button type="button" class="cos-btn cos-btn-secondary" data-modal-action="cancel">取消</button>
+          <button type="button" class="cos-btn cos-btn-primary" id="edit-config-save">保存修改</button>
+        </div>
+      </form>
+    </div>`;
+
+  const modalPromise = UI.openModal(html);
+  setTimeout(()=>{
+    const saveBtn = document.getElementById('edit-config-save');
+    if(saveBtn) saveBtn.onclick = () => {
+      const form = document.getElementById('edit-config-form');
+      if(!form) return;
+      const data = UI.readForm(form);
+      const name = String(data.name || '').trim();
+      if(!name) { UI.toast('名称不能为空','error'); return; }
+      const duplicated = items.some((x,i)=>i !== idx && x === name);
+      if(duplicated) { UI.toast('该选项已存在','error'); return; }
+      UI.closeModal({ name });
+    };
+  }, 50);
+
+  const result = await modalPromise;
+  if(!result || result === 'cancel') return;
+  const newName = String(result.name || '').trim();
+  if(!newName || newName === oldName) return;
+
+  const next = [...items];
+  next[idx] = newName;
+  await cfg.setter(next);
+
+  // 分发渠道改名时，同步改历史分发记录里的渠道名，避免旧名字继续残留。
+  if(cfg.key === 'channels' && typeof P._channelLoad === 'function' && typeof P._channelSave === 'function') {
+    const records = P._channelLoad();
+    let changed = false;
+    records.forEach(r => {
+      if(r.channel === oldName) {
+        r.channel = newName;
+        r.updatedAt = H.nowISO();
+        changed = true;
+      }
+    });
+    if(changed) await P._channelSave(records);
+  }
+
+  UI.toast('已修改');
+  P._renderSettingsTab_Config();
+};
+
 
 // ==================== 数据管理子面板 ====================
 
@@ -7978,7 +8041,7 @@ P.renderChannels = () => {
       ${allStats.topChannel ? `<div class="mt-3 rounded-xl border border-emerald-100 bg-emerald-50/60 px-3 py-2 text-xs text-emerald-700">
         当前表现较好的渠道：<b>${H.esc(allStats.topChannel.channel)}</b> · 引流 ${H.fmtNum(allStats.topChannel.leads)} · 进群 ${H.fmtNum(allStats.topChannel.groupAdds)} · 下载 ${H.fmtNum(allStats.topChannel.downloads)}
       </div>` : ''}
-      <div class="mt-2 text-xs text-gray-400">发布渠道可在「系统设置 → 配置中心 → 发布渠道」中维护。</div>
+      <div class="mt-2 text-xs text-gray-400">分发渠道可在「系统设置 → 配置中心 → 分发渠道」中维护。</div>
     </div>`;
 
   if(items.length === 0) {
@@ -8060,7 +8123,7 @@ P._openChannelModal = async (recordId=null) => {
   const r = isEdit ? items.find(x => x.id === recordId) : {};
   if(isEdit && !r) return;
 
-  const channelOptions = P._channelOptions();
+  const channelOptions = [...new Set([...P._channelOptions(), r?.channel].filter(Boolean))];
   const contents = S.contents.all().slice().sort((a,b)=>String(b.publishDate||'').localeCompare(String(a.publishDate||'')));
   const contentOpts = ['<option value="">不关联内容库</option>'].concat(contents.slice(0,80).map(c =>
     `<option value="${H.esc(c.id)}" ${(r.contentId||'')===c.id?'selected':''}>${H.esc(H.truncate(c.title, 40))}</option>`
@@ -8070,7 +8133,7 @@ P._openChannelModal = async (recordId=null) => {
     <h2 class="text-base font-semibold text-gray-900 mb-5">${isEdit?'编辑分发记录':'新增分发记录'}</h2>
     <form id="channel-form" class="space-y-4">
       <div class="grid grid-cols-2 gap-4">
-        <div>${UI.renderField('发布渠道','channel','select',r.channel||channelOptions[0]||'其他',channelOptions,'选择渠道')}</div>
+        <div>${UI.renderField('分发渠道','channel','select',r.channel||channelOptions[0]||'其他',channelOptions,'选择渠道')}</div>
         <div>${UI.renderField('发布账号','publishAccount','text',r.publishAccount||'',null,'个人号 / 主体号 / 小号A')}</div>
       </div>
       <div>
