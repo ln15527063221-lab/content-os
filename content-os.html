@@ -2209,8 +2209,8 @@ P.renderWorkbench = () => {
   const topics = S.topics.all();
   const today = H.today();
 
-  const expiredHotspots = hotspots.filter(h => h._expired && (h.status||'candidate')==='candidate');
-  const worthHotspots = hotspots.filter(h => !h._expired && (h.status||'candidate')==='candidate' && (Number(h.fitScore)||0) >= 60).sort((a,b)=>(b.fitScore||0)-(a.fitScore||0)).slice(0,5);
+  const expiredHotspots = [];
+  const worthHotspots = hotspots.filter(h => (h.status||'candidate')==='candidate' && (Number(h.fitScore)||0) >= 60).sort((a,b)=>(b.fitScore||0)-(a.fitScore||0)).slice(0,5);
   const pendingTopics = topics.filter(t => ['todo','in_progress','pending_publish'].includes(t.status||'todo')).sort((a,b)=>String(a.priority||'P9').localeCompare(String(b.priority||'P9'))).slice(0,5);
   const todayPublish = contents.filter(c => c.publishDate === today).slice(0,5);
   const growth = P._recentGrowthContents(5);
@@ -2220,7 +2220,7 @@ P.renderWorkbench = () => {
   if(actionsEl) actionsEl.innerHTML = '';
 
   const statCards = [
-    {label:'值得跟进热点', value:worthHotspots.length, hint:expiredHotspots.length ? `另有 ${expiredHotspots.length} 个已过期` : '60分以上待判断', route:'hotspots', color:'text-emerald-600', dot:worthHotspots.length + expiredHotspots.length},
+    {label:'值得跟进热点', value:worthHotspots.length, hint:'60分以上待判断', route:'hotspots', color:'text-emerald-600', dot:worthHotspots.length},
     {label:'待执行选题', value:pendingTopics.length, hint:'待做/制作中/待发布', route:'topics', color:'text-blue-600', dot:pendingTopics.length},
     {label:'今日发布', value:todayPublish.length, hint:'发布时间为今天', route:'calendar', color:'text-purple-600', dot:todayPublish.length},
     {label:'增长明显', value:growth.length, hint:'较上次观看量增长', route:'contents', color:'text-orange-500', dot:growth.length},
@@ -2246,7 +2246,7 @@ P.renderWorkbench = () => {
             </div>
             <div class="text-xs text-gray-500 mt-1 line-clamp-2">${H.esc(P._hotspotShortFitReason(h))}</div>
           </div>`).join('') : '<div class="text-sm text-gray-400 py-6 text-center">暂无值得跟进热点</div>'}</div>
-        ${expiredHotspots.length ? `<div class="mt-3 pt-3 border-t border-gray-100 text-xs text-amber-600">还有 ${expiredHotspots.length} 个热点已超过 3 天未处理，已自动降权。<button class="ml-1 underline" data-route-jump="hotspots">去处理</button></div>` : ''}
+        ${''}
       </div>
 
       <div class="cos-card p-5">
@@ -2521,19 +2521,12 @@ P._hotspotAgeDays = (h) => {
   return Math.floor((Date.now() - d.getTime()) / 86400000);
 };
 P._hotspotIsExpired = (h) => {
-  const status = h?.status || 'candidate';
-  return status === 'candidate' && P._hotspotAgeDays(h) >= 3;
+  // 已关闭自动过期/自动降权：热点分数保持原样，由人工判断是否忽略或转化。
+  return false;
 };
 P._hotspotEffective = (h) => {
   const item = { ...(h || {}) };
-  if(P._hotspotIsExpired(item)) {
-    item._expired = true;
-    item._ageDays = P._hotspotAgeDays(item);
-    item.fitScoreRaw = item.fitScore;
-    item.fitScore = Math.min(Number(item.fitScore)||0, 49);
-    item.fitLevel = '低';
-    if(!item.fitReason) item.fitReason = '超过 3 天未处理，热点新鲜度下降，已自动降权。建议重新评估、转为灵感或忽略。';
-  }
+  item._expired = false;
   return item;
 };
 
@@ -2566,7 +2559,7 @@ P.renderHotspots = () => {
   let items = all;
   if(P._hotspotPlatform !== 'all') items = items.filter(x => x.platform === P._hotspotPlatform);
   if(P._hotspotFilter !== 'all') {
-    if(P._hotspotFilter === 'expired') items = items.filter(x => x._expired);
+    if(P._hotspotFilter === 'expired') items = items.filter(x => (x.status || '') === 'expired');
     else if(P._hotspotFilter === 'candidate') items = items.filter(x => (x.status || 'candidate') === 'candidate' && !x._expired);
     else items = items.filter(x => (x.status || 'candidate') === P._hotspotFilter);
   }
@@ -2574,7 +2567,6 @@ P.renderHotspots = () => {
     items = items.filter(x => P._hotspotMatchSearch(x, P._hotspotSearch));
   }
   items = items.sort((a,b) => {
-    if((a._expired?1:0) !== (b._expired?1:0)) return (a._expired?1:0) - (b._expired?1:0);
     const s = (b.fitScore || 0) - (a.fitScore || 0);
     if(s !== 0) return s;
     return String(a.rank || '').localeCompare(String(b.rank || ''), 'zh-CN', {numeric:true});
@@ -2591,7 +2583,7 @@ P.renderHotspots = () => {
   const stats = {
     total: all.length,
     candidate: all.filter(x => (x.status || 'candidate') === 'candidate' && !x._expired).length,
-    expired: all.filter(x => x._expired).length,
+    expired: all.filter(x => (x.status || '') === 'expired').length,
     high: all.filter(x => !x._expired && (Number(x.fitScore)||0) >= 60).length,
     saved: all.filter(x => ['saved_inspiration','saved_topic'].includes(x.status)).length,
   };
@@ -5440,7 +5432,9 @@ P._calContentMiniCard = (c) => {
 P._openCalendarPublishModal = (date, target) => {
   const topics = S.topics.all().filter(t=>t.status!=='published'&&t.status!=='discarded');
   if(topics.length===0) {
-    UI.toast('没有可发布的选题，请先在选题库创建','error');
+    UI.toast('暂无待用选题，已跳转到选题库创建');
+    if(window.R && typeof R.navigate === 'function') R.navigate('topics');
+    else window.location.hash = '#topics';
     return;
   }
   const topicOpts = topics.map(t=>`<option value="${H.esc(t.id)}">${H.esc(t.title)}</option>`).join('');
@@ -9570,6 +9564,82 @@ Auth._SESSION_KEY = 'content_os_login_session_v1';
 Auth.accounts = [];
 Auth.logs = [];
 Auth.currentUser = null;
+Auth._memorySession = null;
+
+// --- 登录会话安全存取 ---
+// 解决 localStorage 已满时，登录 setItem 报 quota exceeded 导致无法进入后台的问题。
+Auth._cleanupStorageForLogin = () => {
+  const keys = [
+    'content_os_operation_logs_cache',
+    'content_os_last_hotspot_sync_error',
+    'content_os_last_hotspot_local_cache_error',
+    'content_os_last_xhs_import_result',
+    'content_os_last_cloud_write_status',
+    'content_os_last_hotspot_sync_status'
+  ];
+  keys.forEach(k => { try { localStorage.removeItem(k); } catch(_) {} });
+
+  // 热点已同步到 Supabase config，localStorage 只是缓存；如果空间不够，允许清掉缓存。
+  try {
+    const raw = localStorage.getItem('content_os_hotspots_v1') || '';
+    if(raw.length > 200000) localStorage.removeItem('content_os_hotspots_v1');
+  } catch(_) {}
+};
+
+Auth._saveSession = (user) => {
+  const data = JSON.stringify({
+    id:user?.id || '',
+    username:user?.username || '',
+    name:user?.name || '',
+    role:user?.role || 'operator',
+    status:user?.status || 'active',
+    loginAt:H.nowISO()
+  });
+
+  try {
+    localStorage.setItem(Auth._SESSION_KEY, data);
+    try { sessionStorage.removeItem(Auth._SESSION_KEY); } catch(_) {}
+    Auth._memorySession = JSON.parse(data);
+    return 'local';
+  } catch(e1) {
+    console.warn('localStorage 已满，尝试清理缓存后重试登录会话保存：', e1.message);
+    Auth._cleanupStorageForLogin();
+    try {
+      localStorage.setItem(Auth._SESSION_KEY, data);
+      Auth._memorySession = JSON.parse(data);
+      return 'local-cleaned';
+    } catch(e2) {
+      console.warn('localStorage 仍不可用，改用 sessionStorage 保存登录会话：', e2.message);
+      try {
+        sessionStorage.setItem(Auth._SESSION_KEY, data);
+        Auth._memorySession = JSON.parse(data);
+        return 'session';
+      } catch(e3) {
+        console.warn('sessionStorage 也不可用，本次页面内临时登录：', e3.message);
+        Auth._memorySession = JSON.parse(data);
+        return 'memory';
+      }
+    }
+  }
+};
+
+Auth._readSession = () => {
+  try {
+    const raw = localStorage.getItem(Auth._SESSION_KEY);
+    if(raw) return JSON.parse(raw);
+  } catch(_) {}
+  try {
+    const raw = sessionStorage.getItem(Auth._SESSION_KEY);
+    if(raw) return JSON.parse(raw);
+  } catch(_) {}
+  return Auth._memorySession;
+};
+
+Auth._clearSession = () => {
+  try { localStorage.removeItem(Auth._SESSION_KEY); } catch(_) {}
+  try { sessionStorage.removeItem(Auth._SESSION_KEY); } catch(_) {}
+  Auth._memorySession = null;
+};
 
 Auth._fallbackHash = (str) => {
   let h1 = 0xdeadbeef ^ str.length, h2 = 0x41c6ce57 ^ str.length;
@@ -9744,15 +9814,14 @@ Auth.init = async () => {
   await Auth.loadAccounts();
   await Auth.loadLogs();
   try {
-    const raw = localStorage.getItem(Auth._SESSION_KEY);
-    const session = raw ? JSON.parse(raw) : null;
+    const session = Auth._readSession();
     if(session?.username) {
-      const acc = Auth.accounts.find(a => a.username === session.username && a.status === 'active');
+      const acc = Auth.accounts.find(a => String(a.username || '').trim().toLowerCase() === String(session.username || '').trim().toLowerCase() && a.status === 'active');
       if(acc) Auth.currentUser = Auth._publicUser(acc);
-      else localStorage.removeItem(Auth._SESSION_KEY);
+      else Auth._clearSession();
     }
   } catch(_) {
-    localStorage.removeItem(Auth._SESSION_KEY);
+    Auth._clearSession();
   }
 };
 
@@ -9801,10 +9870,7 @@ Auth.showLogin = () => new Promise(resolve => {
         <input class="cos-input" type="password" name="password" autocomplete="current-password" placeholder="请输入密码">
       </div>
       <button type="submit" class="cos-btn cos-btn-primary w-full justify-center" id="auth-login-submit">登录</button>
-      <div class="text-xs text-gray-400 leading-5 bg-gray-50 rounded-lg px-3 py-2">
-        初始管理员：<b>admin</b> / <b>admin123</b><br>
-        账号不区分大小写。上线后请进入「登录管理」修改密码。
-      </div>
+
       <div id="auth-login-error" class="text-sm text-red-500 hidden"></div>
     </form>
   </div>`;
@@ -9866,8 +9932,8 @@ Auth.showLogin = () => new Promise(resolve => {
       Auth.saveAccounts(Auth.accounts, {silent:true});
 
       Auth.currentUser = Auth._publicUser(acc);
-      localStorage.setItem(Auth._SESSION_KEY, JSON.stringify(Auth.currentUser));
-      Auth.log('登录', '登录成功', acc.username, '登录运营后台');
+      const sessionMode = Auth._saveSession(Auth.currentUser);
+      Auth.log('登录', '登录成功', acc.username, '登录运营后台' + (sessionMode === 'memory' ? '（临时会话）' : ''));
       box.remove();
       if(app) app.classList.remove('hidden');
       Auth.updateIndicator();
@@ -9895,7 +9961,7 @@ Auth.requireLogin = async () => {
 
 Auth.logout = () => {
   Auth.log('登录', '退出登录', Auth.currentUser?.username || '', '退出运营后台');
-  localStorage.removeItem(Auth._SESSION_KEY);
+  Auth._clearSession();
   Auth.currentUser = null;
   setTimeout(() => location.reload(), 80);
 };
@@ -9930,7 +9996,7 @@ Auth.updateAccount = async (id, patch) => {
   Auth.log('登录管理', '编辑账号', acc.username, '编辑登录账号：' + acc.username);
   if(Auth.currentUser && Auth.currentUser.id === acc.id) {
     Auth.currentUser = Auth._publicUser(acc);
-    localStorage.setItem(Auth._SESSION_KEY, JSON.stringify(Auth.currentUser));
+    Auth._saveSession(Auth.currentUser);
     Auth.updateIndicator();
   }
 };
