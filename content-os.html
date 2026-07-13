@@ -14,6 +14,16 @@
   ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
 
   /* === Sidebar === */
+  #sidebar, #sidebar-nav {
+    scrollbar-width: none;        /* Firefox */
+    -ms-overflow-style: none;     /* IE/Edge legacy */
+  }
+  #sidebar::-webkit-scrollbar,
+  #sidebar-nav::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;                /* Chrome/Safari */
+  }
   .sidebar-nav-item { transition: all 0.15s ease; }
   .sidebar-nav-item:hover { background: #1e293b; }
   .sidebar-nav-item.active { background: #1e3a8a; color: #e2e8f0; }
