@@ -120,6 +120,45 @@
     font-weight: 700;
   }
 
+  .data-network-diagnostics {
+    margin-top: 14px;
+    padding: 10px 12px;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    background: #f8fafc;
+  }
+  .data-network-check {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 26px;
+    font-size: 12px;
+    color: #64748b;
+  }
+  .data-network-check + .data-network-check { border-top: 1px dashed #e2e8f0; }
+  .data-network-check-label { display:flex; align-items:center; gap:7px; min-width:0; }
+  .data-network-check-dot { width:7px; height:7px; border-radius:999px; background:#cbd5e1; flex-shrink:0; }
+  .data-network-check[data-status="loading"] .data-network-check-dot { background:#3b82f6; box-shadow:0 0 0 4px rgba(59,130,246,.10); animation:networkPulse 1.2s ease-in-out infinite; }
+  .data-network-check[data-status="success"] .data-network-check-dot { background:#22c55e; }
+  .data-network-check[data-status="warning"] .data-network-check-dot { background:#f59e0b; }
+  .data-network-check[data-status="error"] .data-network-check-dot { background:#ef4444; }
+  .data-network-check-state { color:#94a3b8; text-align:right; white-space:nowrap; max-width:190px; overflow:hidden; text-overflow:ellipsis; }
+  .data-network-check[data-status="success"] .data-network-check-state { color:#15803d; }
+  .data-network-check[data-status="warning"] .data-network-check-state { color:#b45309; }
+  .data-network-check[data-status="error"] .data-network-check-state { color:#dc2626; }
+  @keyframes networkPulse { 0%,100%{opacity:.45} 50%{opacity:1} }
+  .data-loading-help {
+    margin-top: 12px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    color: #9a3412;
+    font-size: 12px;
+    line-height: 1.55;
+  }
+
   /* === Form === */
   .cos-input { width:100%; padding:8px 12px; border:1px solid #e2e8f0; border-radius:8px; font-size:14px; outline:none; transition:border-color 0.15s; }
   .cos-input:focus { border-color:#3b82f6; box-shadow:0 0 0 3px rgba(59,130,246,0.1); }
@@ -309,6 +348,73 @@ const SUPABASE = supabase.createClient(
 window.CONTENT_OS_DEBUG && console.log('⚡ Supabase 已连接');
 
 
+// ========== 网络超时、自动重试与错误诊断 ==========
+window.CONTENT_OS_NETWORK = (() => {
+  const DEFAULT_TIMEOUT = 12000;
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+  const timeout = (promise, ms=DEFAULT_TIMEOUT, label='网络请求') => {
+    let timer = null;
+    const timeoutPromise = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        const error = new Error(`${label}连接超时`);
+        error.code = 'NETWORK_TIMEOUT';
+        error.stage = label;
+        reject(error);
+      }, ms);
+    });
+    return Promise.race([Promise.resolve(promise), timeoutPromise]).finally(() => clearTimeout(timer));
+  };
+
+  const classifyError = (error, stage='Supabase') => {
+    const raw = String(error?.message || error || '').trim();
+    const lower = raw.toLowerCase();
+    const status = Number(error?.status || error?.statusCode || error?.context?.status || 0);
+
+    if(navigator.onLine === false) {
+      return { kind:'offline', title:'当前设备没有网络连接', message:'网络已断开，无法加载运营数据', detail:'请连接网络后点击“重新检测并加载”。' };
+    }
+    if(error?.code === 'NETWORK_TIMEOUT' || lower.includes('timeout') || lower.includes('timed out') || lower.includes('超时')) {
+      return { kind:'timeout', title:`${stage}连接超时`, message:`${stage}长时间没有响应`, detail:'VPN 节点可能无法访问 Supabase。请关闭 VPN、切换节点，或将 *.supabase.co 设置为直连。' };
+    }
+    if(lower.includes('failed to fetch') || lower.includes('networkerror') || lower.includes('network request failed') || lower.includes('load failed') || lower.includes('err_connection') || lower.includes('err_name_not_resolved') || lower.includes('fetch failed')) {
+      return { kind:'network', title:`${stage}网络连接失败`, message:`浏览器无法连接 ${stage}`, detail:'网页本身已打开，但 VPN、代理或 DNS 可能拦截了 Supabase 请求。请关闭 VPN、切换节点，或设置 *.supabase.co 直连。' };
+    }
+    if(status === 401 || lower.includes('jwt') || lower.includes('invalid token') || lower.includes('not authenticated')) {
+      return { kind:'auth', title:'登录状态已失效', message:'Supabase 登录凭证无效或已过期', detail:'请重新登录；如果管理员修改密码或停用账号，旧登录会自动失效。' };
+    }
+    if(status === 403 || lower.includes('permission denied') || lower.includes('row-level security') || lower.includes('rls')) {
+      return { kind:'permission', title:'数据权限校验失败', message:'当前账号没有读取该数据的权限', detail:'请联系管理员检查账号状态和 Supabase RLS 配置。' };
+    }
+    if(status >= 500 || lower.includes('502') || lower.includes('503') || lower.includes('gateway')) {
+      return { kind:'service', title:`${stage}服务暂时不可用`, message:`${stage}返回了服务异常`, detail:'请稍后重新检测；如果仅开启 VPN 时出现，请切换节点或设置 Supabase 域名直连。' };
+    }
+    return { kind:'unknown', title:`${stage}请求失败`, message:raw || `${stage}请求失败`, detail:'请点击“重新检测并加载”。若关闭 VPN 后恢复，建议将 *.supabase.co 设置为直连。' };
+  };
+
+  const withRetry = async (task, opts={}) => {
+    const attempts = Math.max(1, Number(opts.attempts || 2));
+    const timeoutMs = Math.max(3000, Number(opts.timeoutMs || DEFAULT_TIMEOUT));
+    const label = opts.label || 'Supabase';
+    let lastError = null;
+    for(let attempt=1; attempt<=attempts; attempt++) {
+      try {
+        if(typeof opts.onAttempt === 'function') opts.onAttempt(attempt, attempts);
+        return await timeout(Promise.resolve().then(task), timeoutMs, label);
+      } catch(error) {
+        lastError = error;
+        const info = classifyError(error, label);
+        if(['auth','permission'].includes(info.kind) || attempt >= attempts) break;
+        await sleep(900 + attempt * 300);
+      }
+    }
+    throw lastError || new Error(`${label}请求失败`);
+  };
+
+  return { DEFAULT_TIMEOUT, timeout, withRetry, classifyError };
+})();
+
+
 
 tailwind.config = {
   theme: {
@@ -397,7 +503,26 @@ tailwind.config = {
           <span class="data-loading-dot"></span>
           <span id="data-loading-detail">准备同步内容、选题、灵感和用户数据</span>
         </div>
-        <button id="data-loading-retry" type="button" class="cos-btn cos-btn-primary mt-5 hidden">重新加载</button>
+        <div id="data-network-diagnostics" class="data-network-diagnostics">
+          <div id="network-check-page" class="data-network-check" data-status="success">
+            <span class="data-network-check-label"><span class="data-network-check-dot"></span>网页资源</span>
+            <span class="data-network-check-state">已加载</span>
+          </div>
+          <div id="network-check-auth" class="data-network-check" data-status="loading">
+            <span class="data-network-check-label"><span class="data-network-check-dot"></span>Supabase 登录服务</span>
+            <span class="data-network-check-state">等待检测</span>
+          </div>
+          <div id="network-check-data" class="data-network-check" data-status="loading">
+            <span class="data-network-check-label"><span class="data-network-check-dot"></span>Supabase 数据服务</span>
+            <span class="data-network-check-state">等待登录</span>
+          </div>
+          <div id="network-check-function" class="data-network-check" data-status="success">
+            <span class="data-network-check-label"><span class="data-network-check-dot"></span>账号管理服务</span>
+            <span class="data-network-check-state">使用时检测</span>
+          </div>
+        </div>
+        <div id="data-loading-help" class="data-loading-help hidden"></div>
+        <button id="data-loading-retry" type="button" class="cos-btn cos-btn-primary mt-5 hidden">重新检测并加载</button>
       </div>
     </div>
   </div>
@@ -970,6 +1095,127 @@ S._checkBurst = () => { /* no-op */ };
 S.db = null;
 
 // ============ 主加载流程（Supabase 为唯一数据源） ============
+// 内容库数据量通常最大：采用分页分批请求、单批超时重试和 IndexedDB 缓存兜底，
+// 避免 VPN/代理环境下一次性 select('*') 返回过大而导致内容库与日历同时空白。
+S._loadStatus = {
+  contents: { status:'idle', fromCache:false, error:'', count:0, lastLoadedAt:'' }
+};
+
+S._ensureCacheReady = async () => {
+  try {
+    await S._idb.open();
+    return true;
+  } catch(e) {
+    console.warn('⚠️ [CACHE] IndexedDB 初始化失败：', e?.message || e);
+    return false;
+  }
+};
+
+S._normalizeContentRows = (rows=[]) => rows.map(c => ({
+  ...c,
+  publishDate: H.parseDate(c.publishDate) || c.publishDate || '',
+  publishTime: String(c.publishTime || '').match(/(\d{1,2})[:：](\d{2})/)
+    ? String(String(c.publishTime || '').match(/(\d{1,2})[:：](\d{2})/)[1]).padStart(2,'0') + ':' + String(c.publishTime || '').match(/(\d{1,2})[:：](\d{2})/)[2]
+    : (c.publishTime || '')
+}));
+
+S._fetchContentsPaged = async (onProgress) => {
+  const PAGE_SIZE = 50;
+  const MAX_PAGES = 100;
+  const rows = [];
+  let page = 0;
+
+  while(page < MAX_PAGES) {
+    const from = page * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
+    const batchNo = page + 1;
+
+    const response = await window.CONTENT_OS_NETWORK.withRetry(
+      () => SUPABASE
+        .from('contents')
+        .select('*')
+        .order('created_at', { ascending:false })
+        .range(from, to),
+      {
+        label:`内容库第 ${batchNo} 批`,
+        timeoutMs:25000,
+        attempts:3,
+        onAttempt:(attempt, attempts) => {
+          try {
+            if(typeof onProgress === 'function') onProgress({
+              progress: Math.min(58, 14 + batchNo * 5),
+              message: attempt > 1
+                ? `正在重试内容库第 ${batchNo} 批（${attempt}/${attempts}）`
+                : `正在加载内容库（第 ${batchNo} 批）...`,
+              detail: rows.length
+                ? `已同步 ${rows.length} 条内容，正在继续加载`
+                : '内容库数据较多，已改为分批加载'
+            });
+          } catch(_) {}
+        }
+      }
+    );
+
+    const { data, error } = response || {};
+    if(error) throw error;
+    const batch = Array.isArray(data) ? data : [];
+    rows.push(...batch);
+
+    try {
+      if(typeof onProgress === 'function') onProgress({
+        progress: Math.min(60, 18 + batchNo * 5),
+        message:'正在加载内容库与内容日历...',
+        detail:`已同步 ${rows.length} 条内容`
+      });
+    } catch(_) {}
+
+    if(batch.length < PAGE_SIZE) break;
+    page += 1;
+  }
+
+  if(page >= MAX_PAGES) {
+    console.warn('⚠️ [LOAD] 内容库达到分页安全上限，已加载前 ' + rows.length + ' 条');
+  }
+  return rows;
+};
+
+S._refreshContentViews = () => {
+  const route = window.R?.currentRoute || window.location.hash.replace('#','') || '';
+  if(route === 'calendar' && window.P?.renderCalendarPage) P.renderCalendarPage();
+  else if(route === 'contents' && window.P?.renderContentsPage) P.renderContentsPage();
+};
+
+S.reloadContents = async () => {
+  if(S._loadStatus.contents.status === 'loading') return;
+  S._loadStatus.contents = { ...S._loadStatus.contents, status:'loading', error:'' };
+  S._refreshContentViews();
+  try {
+    const raw = await S._fetchContentsPaged((state) => {
+      const message = state?.detail || state?.message || '正在重新加载内容数据...';
+      S._loadStatus.contents = { ...S._loadStatus.contents, detail:message };
+      const detailEl = document.getElementById('content-load-progress-detail');
+      if(detailEl) detailEl.textContent = message;
+    });
+    const mapped = S._normalizeContentRows(raw.map(_toCamel2));
+    S.db.contents = mapped;
+    S._loadStatus.contents = {
+      status:'success', fromCache:false, error:'', count:mapped.length, lastLoadedAt:H.nowISO()
+    };
+    try { await S._idb.putAll('contents', mapped); } catch(e) { console.warn('内容缓存写入失败：', e?.message || e); }
+    S._refreshContentViews();
+    try { UI.toast(`内容库已重新加载，共 ${mapped.length} 条`, 'success'); } catch(_) {}
+    return { success:true, count:mapped.length };
+  } catch(e) {
+    S._loadStatus.contents = {
+      ...S._loadStatus.contents,
+      status:'error', fromCache:false, error:e?.message || String(e)
+    };
+    S._refreshContentViews();
+    try { UI.toast('内容库重新加载失败，请关闭 VPN、切换节点后再试', 'error'); } catch(_) {}
+    throw e;
+  }
+};
+
 S.load = async (onProgress) => {
   window.CONTENT_OS_DEBUG && console.log('☁️  [LOAD] ===== 开始从 Supabase 加载 =====');
   window.CONTENT_OS_DEBUG && console.log('🔍 [S.DB BEFORE] 加载前 S.db 状态:', (S.db ? Object.keys(S.db) : 'null'));
@@ -984,44 +1230,96 @@ S.load = async (onProgress) => {
     { table:'users', label:'内测用户' }
   ];
   const results = {};
+  const resultIsCamel = {};
+  const cloudSuccess = {};
   const errors = [];
   let total = 0;
   let completed = 0;
 
   report({ progress:5, message:'正在连接 Supabase...', detail:'准备并行加载云端数据' });
 
-  // 并行请求各业务表，较原来的顺序请求更快；不会改变任何数据。
+  const cacheReady = await S._ensureCacheReady();
+  let cachedContents = [];
+  if(cacheReady) {
+    try { cachedContents = await S._idb.getAll('contents'); }
+    catch(e) { console.warn('⚠️ [CACHE] 读取内容缓存失败：', e?.message || e); }
+  }
+
+  // 选题、灵感、用户继续并行加载；内容库内部改为 50 条/批，降低单次响应体积。
   await Promise.all(tableDefs.map(async ({table, label}) => {
     try {
-      const { data, error } = await SUPABASE.from(table).select('*');
-      window.CONTENT_OS_DEBUG && console.log('🔍 [SUPABASE RAW] ' + table + ' → error=' + (error ? error.message : 'null') + ', data=' + (data ? data.length + '条' : 'null'), data||[]);
-      if(error) throw error;
+      let data = [];
+      if(table === 'contents') {
+        S._loadStatus.contents = { status:'loading', fromCache:false, error:'', count:0, lastLoadedAt:'' };
+        data = await S._fetchContentsPaged(report);
+      } else {
+        const response = await window.CONTENT_OS_NETWORK.withRetry(
+          () => SUPABASE.from(table).select('*'),
+          {
+            label:`${label}数据`, timeoutMs:12000, attempts:2,
+            onAttempt:(attempt, attempts) => report({
+              progress:8 + completed * 14,
+              message: attempt > 1 ? `正在重试 ${label}（${attempt}/${attempts}）` : `正在加载 ${label}...`,
+              detail: attempt > 1 ? '首次连接超时，已自动重试' : '连接 Supabase 数据服务'
+            })
+          }
+        );
+        const error = response?.error;
+        if(error) throw error;
+        data = response?.data || [];
+      }
+
+      window.CONTENT_OS_DEBUG && console.log('🔍 [SUPABASE RAW] ' + table + ' → ' + data.length + '条');
       results[table] = data || [];
+      cloudSuccess[table] = true;
       total += results[table].length;
+      if(table === 'contents') {
+        S._loadStatus.contents = {
+          status:'success', fromCache:false, error:'', count:data.length, lastLoadedAt:H.nowISO()
+        };
+      }
     } catch(e) {
+      cloudSuccess[table] = false;
       console.error('❌ [LOAD] ' + table + ': ' + (e.message || e));
-      results[table] = [];
-      errors.push({ table, label, message:e.message || String(e) });
+      if(table === 'contents' && cachedContents.length) {
+        // 云端内容请求失败时展示上一次成功缓存，不让内容库和日历直接空白。
+        results[table] = cachedContents;
+        resultIsCamel[table] = true;
+        total += cachedContents.length;
+        S._loadStatus.contents = {
+          status:'cached', fromCache:true, error:e.message || String(e), count:cachedContents.length, lastLoadedAt:''
+        };
+        errors.push({ table, label, message:e.message || String(e), usedCache:true });
+      } else {
+        results[table] = [];
+        if(table === 'contents') {
+          S._loadStatus.contents = {
+            status:'error', fromCache:false, error:e.message || String(e), count:0, lastLoadedAt:''
+          };
+        }
+        errors.push({ table, label, message:e.message || String(e), usedCache:false });
+      }
     } finally {
       completed += 1;
       report({
-        progress: 8 + completed * 14,
+        progress: Math.min(70, 8 + completed * 14),
         message: `正在同步运营数据（${completed}/${tableDefs.length + 1}）`,
-        detail: `${label}加载完成`
+        detail: table === 'contents' && S._loadStatus.contents.fromCache
+          ? `内容库云端连接失败，已显示上次缓存 ${S._loadStatus.contents.count} 条`
+          : `${label}加载完成`
       });
     }
   }));
 
-  report({ progress:68, message:'正在整理数据格式...', detail:'统一内容日期、账号和发布人信息' });
+  report({ progress:72, message:'正在整理数据格式...', detail:'统一内容日期、账号和发布人信息' });
 
-  // 反向映射 snake_case → camelCase
+  // 反向映射 snake_case → camelCase；IndexedDB 缓存本身已经是 camelCase。
   const mapped_topics = (results.topics||[]).map(_toCamel2);
-  const mapped_contents = (results.contents||[]).map(_toCamel2);
+  const mapped_contents = S._normalizeContentRows(
+    resultIsCamel.contents ? (results.contents||[]) : (results.contents||[]).map(_toCamel2)
+  );
   const mapped_inspirations = (results.inspirations||[]).map(_toCamel2);
   const mapped_users = (results.users||[]).map(_toCamel2);
-  window.CONTENT_OS_DEBUG && console.log('🔍 [MAPPED DATA] topics:', mapped_topics.length + '条', mapped_topics[0]||null);
-  window.CONTENT_OS_DEBUG && console.log('🔍 [MAPPED DATA] contents:', mapped_contents.length + '条', mapped_contents[0]||null);
-  window.CONTENT_OS_DEBUG && console.log('🔍 [MAPPED DATA] users:', mapped_users.length + '条');
 
   S.db = {
     version: C.VERSION, lastModified: H.nowISO(),
@@ -1033,9 +1331,13 @@ S.load = async (onProgress) => {
   };
 
   // 加载 config
-  report({ progress:78, message:'正在同步系统配置（5/5）', detail:'加载平台、账号和渠道配置' });
+  report({ progress:82, message:'正在同步系统配置（5/5）', detail:'加载平台、账号和渠道配置' });
   try {
-    const { data: cfgRows, error: cfgError } = await SUPABASE.from('config').select('*');
+    const cfgResponse = await window.CONTENT_OS_NETWORK.withRetry(
+      () => SUPABASE.from('config').select('*'),
+      { label:'系统配置数据', timeoutMs:12000, attempts:2 }
+    );
+    const { data: cfgRows, error: cfgError } = cfgResponse || {};
     if(cfgError) throw cfgError;
     if(cfgRows) cfgRows.forEach(c => { S.db.config[c.key] = c.value; });
   } catch(e) {
@@ -1045,26 +1347,31 @@ S.load = async (onProgress) => {
   const defCfg = S.emptyDB().config;
   for(const ck of Object.keys(defCfg)) { if(!(ck in S.db.config)) S.db.config[ck] = defCfg[ck]; }
 
-  report({ progress:90, message:'正在生成页面数据...', detail:`已同步 ${total} 条业务记录` });
+  report({ progress:92, message:'正在生成页面数据...', detail:`已同步 ${total} 条业务记录` });
 
-  // 统一内容日期字段，避免内容库和内容日历使用不同格式导致错位。
-  if(Array.isArray(S.db.contents)) {
-    S.db.contents = S.db.contents.map(c => ({
-      ...c,
-      publishDate: H.parseDate(c.publishDate) || c.publishDate || '',
-      publishTime: String(c.publishTime || '').match(/(\d{1,2})[:：](\d{2})/)
-        ? String(String(c.publishTime || '').match(/(\d{1,2})[:：](\d{2})/)[1]).padStart(2,'0') + ':' + String(c.publishTime || '').match(/(\d{1,2})[:：](\d{2})/)[2]
-        : (c.publishTime || '')
-    }));
+  // 把本次成功数据写入浏览器缓存。内容云端失败时不覆盖原有内容缓存。
+  if(cacheReady) {
+    const cacheJobs = [];
+    if(cloudSuccess.topics) cacheJobs.push(S._idb.putAll('topics', mapped_topics));
+    if(cloudSuccess.inspirations) cacheJobs.push(S._idb.putAll('inspirations', mapped_inspirations));
+    if(cloudSuccess.users) cacheJobs.push(S._idb.putAll('users', mapped_users));
+    if(S._loadStatus.contents.status === 'success') cacheJobs.push(S._idb.putAll('contents', mapped_contents));
+    Promise.allSettled(cacheJobs).catch(()=>{});
   }
 
-  window.CONTENT_OS_DEBUG && console.log('🔍 [S.DB AFTER] S.db.topics:', S.db.topics.length + '条', S.db.topics);
-  window.CONTENT_OS_DEBUG && console.log('🔍 [S.DB AFTER] S.db.contents:', S.db.contents.length + '条', S.db.contents);
+  window.CONTENT_OS_DEBUG && console.log('🔍 [S.DB AFTER] S.db.topics:', S.db.topics.length + '条');
+  window.CONTENT_OS_DEBUG && console.log('🔍 [S.DB AFTER] S.db.contents:', S.db.contents.length + '条');
   window.CONTENT_OS_DEBUG && console.log('☁️  [LOAD] ===== 完成: ' + total + ' 条，异常 ' + errors.length + ' 项 =====');
 
   S._updateIndicator();
-  report({ progress:100, message:'数据同步完成', detail:`共加载 ${total} 条数据` });
-  return { success:errors.length===0, total, errors };
+  report({
+    progress:100,
+    message:'数据同步完成',
+    detail:S._loadStatus.contents.fromCache
+      ? `内容库显示上次缓存 ${S._loadStatus.contents.count} 条，其余数据已同步`
+      : `共加载 ${total} 条数据`
+  });
+  return { success:errors.length===0, total, errors, contentStatus:{...S._loadStatus.contents} };
 };
 
 // --- 数据迁移 ---
@@ -1839,7 +2146,6 @@ UI.toast = (message, type='success') => {
 
 UI.dataLoading = {
   _slowTimer: null,
-  _retryHandler: null,
 
   _els() {
     return {
@@ -1852,8 +2158,24 @@ UI.dataLoading = {
       spinner: document.getElementById('data-loading-spinner'),
       success: document.getElementById('data-loading-success'),
       error: document.getElementById('data-loading-error'),
-      retry: document.getElementById('data-loading-retry')
+      retry: document.getElementById('data-loading-retry'),
+      help: document.getElementById('data-loading-help')
     };
+  },
+
+  setCheck(name, status='loading', text='检测中...') {
+    const row = document.getElementById(`network-check-${name}`);
+    if(!row) return;
+    row.dataset.status = status;
+    const state = row.querySelector('.data-network-check-state');
+    if(state) state.textContent = text;
+  },
+
+  resetChecks() {
+    this.setCheck('page', 'success', '已加载');
+    this.setCheck('auth', 'loading', '等待检测');
+    this.setCheck('data', 'loading', '等待登录');
+    this.setCheck('function', 'success', '使用时检测');
   },
 
   show(opts={}) {
@@ -1871,11 +2193,19 @@ UI.dataLoading = {
     el.success.style.display = 'none';
     el.error.style.display = 'none';
     el.retry.classList.add('hidden');
+    el.retry.disabled = false;
+    el.retry.textContent = '重新检测并加载';
     el.retry.onclick = null;
+    if(el.help) { el.help.classList.add('hidden'); el.help.textContent = ''; }
+    this.resetChecks();
     this._slowTimer = setTimeout(() => {
       const current = this._els();
       if(current.overlay && !current.overlay.classList.contains('hidden')) {
-        current.message.textContent = '网络响应较慢，数据仍在同步中，请稍候...';
+        current.message.textContent = '网络响应较慢，正在自动重试 Supabase 请求...';
+        if(current.help) {
+          current.help.classList.remove('hidden');
+          current.help.textContent = '若开启 VPN 后一直停在这里，请切换节点，或将 *.supabase.co 设置为直连。';
+        }
       }
     }, 8000);
   },
@@ -1893,34 +2223,46 @@ UI.dataLoading = {
     }
   },
 
-  finish(message='数据加载完成') {
+  finish(message='数据加载完成', detail='内容库、内容日历和渠道分发已同步') {
     clearTimeout(this._slowTimer);
     const el = this._els();
     if(!el.overlay) return;
-    this.update({ progress:100, message, detail:'内容库、内容日历和渠道分发已同步' });
+    this.update({ progress:100, message, detail });
     el.spinner.style.display = 'none';
     el.error.style.display = 'none';
     el.success.style.display = 'flex';
-    setTimeout(() => this.hide(), 480);
+    if(el.help) el.help.classList.add('hidden');
+    setTimeout(() => this.hide(), 650);
   },
 
-  fail(message='数据加载失败，请重试', onRetry=null) {
+  fail(errorOrMessage='数据加载失败，请重试', onRetry=null, stage='Supabase') {
     clearTimeout(this._slowTimer);
     const el = this._els();
     if(!el.overlay) return;
-    el.title.textContent = '数据加载失败';
-    el.message.textContent = message;
-    el.detail.textContent = navigator.onLine === false ? '当前设备似乎没有网络连接' : '请检查网络或 Supabase 服务状态';
+    const info = typeof errorOrMessage === 'string'
+      ? { title:'数据加载失败', message:errorOrMessage, detail:navigator.onLine === false ? '当前设备似乎没有网络连接' : '请检查网络、VPN 或 Supabase 服务状态', kind:'unknown' }
+      : (window.CONTENT_OS_NETWORK?.classifyError(errorOrMessage, stage) || { title:'数据加载失败', message:String(errorOrMessage || ''), detail:'请重新检测', kind:'unknown' });
+    el.title.textContent = info.title || '数据加载失败';
+    el.message.textContent = info.message || '数据加载失败，请重试';
+    el.detail.textContent = ['network','timeout'].includes(info.kind) ? '页面已打开，但云端数据连接失败' : '请根据下方提示处理后重试';
     el.spinner.style.display = 'none';
     el.success.style.display = 'none';
     el.error.style.display = 'flex';
     el.percent.textContent = '—';
+    if(el.help) {
+      el.help.classList.remove('hidden');
+      el.help.textContent = info.detail || '请关闭 VPN、切换节点，或将 *.supabase.co 设置为直连。';
+    }
     el.retry.classList.remove('hidden');
-    el.retry.onclick = () => {
+    el.retry.onclick = async () => {
       el.retry.disabled = true;
-      el.retry.textContent = '重新加载中...';
-      if(typeof onRetry === 'function') onRetry();
-      else location.reload();
+      el.retry.textContent = '正在重新检测...';
+      try {
+        if(typeof onRetry === 'function') await onRetry();
+        else location.reload();
+      } catch(_) {
+        location.reload();
+      }
     };
   },
 
@@ -6172,26 +6514,64 @@ P.renderTopicsPage = () => {
   P.renderTopics('page-body-inner');
 };
 
+P._contentLoadStatusHtml = () => {
+  const st = S._loadStatus?.contents || {status:'idle'};
+  if(st.status === 'success' || st.status === 'idle') return '';
+  if(st.status === 'loading') {
+    return `<div class="mb-4 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 flex items-center justify-between gap-4">
+      <div class="flex items-center gap-3 min-w-0"><span class="cos-spinner"></span><div><div class="text-sm font-medium text-blue-800">正在重新加载内容库与日历</div><div id="content-load-progress-detail" class="text-xs text-blue-600 mt-0.5">${H.esc(st.detail || '内容数据较多，正在分批同步，请稍候')}</div></div></div>
+      <button class="cos-btn cos-btn-secondary cos-btn-sm" disabled>加载中</button>
+    </div>`;
+  }
+  if(st.status === 'cached') {
+    return `<div class="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 flex items-center justify-between gap-4">
+      <div class="min-w-0"><div class="text-sm font-medium text-amber-800">当前显示上次成功加载的数据</div><div class="text-xs text-amber-700 mt-0.5">Supabase 内容接口连接失败，已保留 ${Number(st.count||0)} 条缓存。关闭 VPN、切换节点后可单独重试，不影响其他模块。</div></div>
+      <button class="cos-btn cos-btn-secondary cos-btn-sm shrink-0" data-retry-contents>重新加载内容</button>
+    </div>`;
+  }
+  return `<div class="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 flex items-center justify-between gap-4">
+    <div class="min-w-0"><div class="text-sm font-medium text-red-700">内容库与内容日历加载失败</div><div class="text-xs text-red-600 mt-0.5">${H.esc(st.error || '请关闭 VPN、切换节点，或将 *.supabase.co 设置为直连')}</div></div>
+    <button class="cos-btn cos-btn-secondary cos-btn-sm shrink-0" data-retry-contents>重新加载内容</button>
+  </div>`;
+};
+
+P._bindContentReloadButton = () => {
+  document.querySelectorAll('[data-retry-contents]').forEach(btn => {
+    btn.onclick = async () => {
+      btn.disabled = true;
+      btn.textContent = '正在加载...';
+      try { await S.reloadContents(); }
+      catch(_) { btn.disabled = false; btn.textContent = '重新加载内容'; }
+    };
+  });
+};
+
 P.renderContentsPage = () => {
-  document.getElementById('page-body').innerHTML = '<div id="page-body-inner"></div>';
+  document.getElementById('page-body').innerHTML = `<div id="content-load-status">${P._contentLoadStatusHtml()}</div><div id="page-body-inner"></div>`;
   P.renderContents('page-body-inner');
   // 内容库顶部操作按钮
   const actionsEl = document.getElementById('page-actions');
-  if(actionsEl) actionsEl.innerHTML = '<button class="cos-btn cos-btn-primary cos-btn-sm" id="btn-batch-sync-channel">📣 同步到渠道分发</button><button class="cos-btn cos-btn-secondary cos-btn-sm" id="btn-import-xhs">📥 导入小红书数据</button><button class="cos-btn cos-btn-secondary cos-btn-sm" id="btn-xhs-import-logs">🧾 导入记录</button>';
-  // 绑定导入按钮
+  if(actionsEl) actionsEl.innerHTML = '<button class="cos-btn cos-btn-primary cos-btn-sm" id="btn-batch-sync-channel">📣 同步到渠道分发</button><button class="cos-btn cos-btn-secondary cos-btn-sm" id="btn-refresh-contents">↻ 刷新内容</button><button class="cos-btn cos-btn-secondary cos-btn-sm" id="btn-import-xhs">📥 导入小红书数据</button><button class="cos-btn cos-btn-secondary cos-btn-sm" id="btn-xhs-import-logs">🧾 导入记录</button>';
   setTimeout(() => {
     const syncBtn = document.getElementById('btn-batch-sync-channel');
+    const refreshBtn = document.getElementById('btn-refresh-contents');
     const btn = document.getElementById('btn-import-xhs');
     const logBtn = document.getElementById('btn-xhs-import-logs');
     if(syncBtn) syncBtn.onclick = () => P._openBatchSyncChannelModal();
+    if(refreshBtn) refreshBtn.onclick = async () => {
+      refreshBtn.disabled = true; refreshBtn.textContent = '正在刷新...';
+      try { await S.reloadContents(); } catch(_) { refreshBtn.disabled = false; refreshBtn.textContent = '↻ 刷新内容'; }
+    };
     if(btn) btn.onclick = () => P._importXiaohongshuData(btn);
     if(logBtn) logBtn.onclick = () => P._openXhsImportLogs();
+    P._bindContentReloadButton();
   }, 50);
 };
 
 P.renderCalendarPage = () => {
-  document.getElementById('page-body').innerHTML = '<div id="page-body-inner"></div>';
+  document.getElementById('page-body').innerHTML = `<div id="content-load-status">${P._contentLoadStatusHtml()}</div><div id="page-body-inner"></div>`;
   P.renderCalendar('page-body-inner');
+  setTimeout(() => P._bindContentReloadButton(), 30);
 };
 
 // ==================== 内容库 → 渠道分发：批量同步 ====================
@@ -10079,7 +10459,11 @@ Auth._mapMember = (row) => row ? ({
 }) : null;
 
 Auth._getSession = async () => {
-  const { data, error } = await SUPABASE.auth.getSession();
+  const result = await window.CONTENT_OS_NETWORK.withRetry(
+    () => SUPABASE.auth.getSession(),
+    { label:'Supabase 登录服务', timeoutMs:10000, attempts:2 }
+  );
+  const { data, error } = result || {};
   if(error) throw error;
   return data?.session || null;
 };
@@ -10174,6 +10558,8 @@ Auth.init = async () => {
       Auth.startSessionGuard();
     }
   } catch(e) {
+    const info = window.CONTENT_OS_NETWORK.classifyError(e, 'Supabase 登录服务');
+    if(['offline','timeout','network','service'].includes(info.kind)) throw e;
     console.warn('现有登录状态无效：', e.message || e);
     try { await SUPABASE.auth.signOut({ scope:'local' }); } catch(_) {}
     Auth.currentUser = null;
@@ -10295,8 +10681,23 @@ Auth.showLogin = () => new Promise(resolve => {
       const email = String(form.querySelector('[name="email"]')?.value || '').trim().toLowerCase();
       const password = String(form.querySelector('[name="password"]')?.value || '');
       if(!email || !password) throw new Error('请填写邮箱和密码');
-      const { data, error } = await SUPABASE.auth.signInWithPassword({ email, password });
-      if(error) throw new Error('邮箱或密码不正确');
+      let authResponse;
+      try {
+        authResponse = await window.CONTENT_OS_NETWORK.timeout(
+          SUPABASE.auth.signInWithPassword({ email, password }),
+          15000,
+          'Supabase 登录服务'
+        );
+      } catch(networkError) {
+        const info = window.CONTENT_OS_NETWORK.classifyError(networkError, 'Supabase 登录服务');
+        throw new Error(`${info.message}。${info.detail}`);
+      }
+      const { data, error } = authResponse || {};
+      if(error) {
+        const info = window.CONTENT_OS_NETWORK.classifyError(error, 'Supabase 登录服务');
+        if(['network','timeout','offline','service'].includes(info.kind)) throw new Error(`${info.message}。${info.detail}`);
+        throw new Error('邮箱或密码不正确');
+      }
       await Auth._applySession(data?.session);
       await Auth.loadLogs();
       Auth.startSessionGuard();
@@ -10331,10 +10732,21 @@ Auth.logout = async () => {
 
 Auth._invokeAdmin = async (body) => {
   if(!Auth.isAdmin()) throw new Error('只有管理员可以管理账号');
-  const { data, error } = await SUPABASE.functions.invoke(Auth._ADMIN_FUNCTION, { body });
-  if(error) throw new Error(data?.error || error.message || '账号管理服务调用失败');
-  if(data?.error) throw new Error(data.error);
-  return data || {};
+  try {
+    const result = await window.CONTENT_OS_NETWORK.withRetry(
+      () => SUPABASE.functions.invoke(Auth._ADMIN_FUNCTION, { body }),
+      { label:'Supabase 账号管理服务', timeoutMs:15000, attempts:2 }
+    );
+    const { data, error } = result || {};
+    if(error) throw Object.assign(new Error(data?.error || error.message || '账号管理服务调用失败'), { status:error?.context?.status || error?.status });
+    if(data?.error) throw new Error(data.error);
+    try { UI.dataLoading?.setCheck('function', 'success', '连接正常'); } catch(_) {}
+    return data || {};
+  } catch(error) {
+    try { UI.dataLoading?.setCheck('function', 'error', '连接失败'); } catch(_) {}
+    const info = window.CONTENT_OS_NETWORK.classifyError(error, 'Supabase 账号管理服务');
+    throw new Error(`${info.message}。${info.detail}`);
+  }
 };
 
 Auth.loadAccounts = async () => {
@@ -10517,8 +10929,18 @@ async function init() {
     detail:'连接账号与权限服务'
   });
   UI.dataLoading.update({ progress:3 });
+  UI.dataLoading.setCheck('page', 'success', '已加载');
+  UI.dataLoading.setCheck('auth', 'loading', '正在连接');
 
-  await Auth.init();
+  try {
+    await Auth.init();
+    UI.dataLoading.setCheck('auth', 'success', '连接正常');
+  } catch(authError) {
+    UI.dataLoading.setCheck('auth', 'error', '连接失败');
+    UI.dataLoading.setCheck('data', 'warning', '尚未检测');
+    UI.dataLoading.fail(authError, () => location.reload(), 'Supabase 登录服务');
+    return;
+  }
   UI.dataLoading.update({ progress:8, message:'登录状态验证完成', detail:'正在确认账号权限' });
   const loggedIn = await Auth.requireLogin();
   if(!loggedIn) { UI.dataLoading.hide(); return; }
@@ -10530,18 +10952,33 @@ async function init() {
     message:'正在连接 Supabase，请稍候...',
     detail:'准备同步内容、选题、灵感和用户数据'
   });
+  UI.dataLoading.setCheck('data', 'loading', '正在连接');
 
   let loadResult = null;
   try {
     loadResult = await S.load((state) => UI.dataLoading.update(state));
     const coreFailures = (loadResult?.errors || []).filter(x => ['topics','contents','inspirations','users'].includes(x.table));
     if(coreFailures.length === 4) {
-      throw new Error('无法读取云端业务数据，请检查网络连接或 Supabase 权限');
+      const err = new Error('所有业务数据模块均连接失败');
+      err.code = 'NETWORK_ALL_DATA_FAILED';
+      err.failedModules = coreFailures;
+      throw err;
     }
-    UI.dataLoading.finish(loadResult?.errors?.length ? '数据已加载，部分模块暂时不可用' : '运营数据加载完成');
+    if(loadResult?.errors?.length) {
+      const failedNames = loadResult.errors.map(x => x.usedCache ? `${x.label || x.table}（已显示缓存）` : (x.label || x.table)).join('、');
+      UI.dataLoading.setCheck('data', 'warning', `${loadResult.errors.length} 项异常`);
+      UI.dataLoading.finish('数据已加载，部分模块暂时不可用', `未加载：${failedNames}`);
+      setTimeout(() => UI.toast(`以下模块加载失败：${failedNames}。可关闭 VPN 后刷新重试`, 'warn'), 800);
+    } else {
+      UI.dataLoading.setCheck('data', 'success', '连接正常');
+      UI.dataLoading.finish('运营数据加载完成');
+    }
   } catch(loadError) {
     console.error('❌ [LOAD] 首次数据加载失败：', loadError);
-    UI.dataLoading.fail(loadError?.message || '数据加载失败，请重试', () => location.reload());
+    UI.dataLoading.setCheck('data', 'error', '连接失败');
+    const failedNames = Array.isArray(loadError?.failedModules) ? loadError.failedModules.map(x => x.label || x.table).join('、') : '';
+    if(failedNames) loadError.message = `无法加载：${failedNames}`;
+    UI.dataLoading.fail(loadError, () => location.reload(), 'Supabase 数据服务');
     return;
   }
 
@@ -10583,12 +11020,24 @@ async function init() {
   }
 }
 
+window.addEventListener('offline', () => {
+  try { UI.toast('网络已断开，云端数据暂时无法同步', 'warn'); } catch(_) {}
+});
+window.addEventListener('online', () => {
+  try { UI.toast('网络已恢复，请刷新或重新加载数据', 'info'); } catch(_) {}
+});
+
 // 启动（带错误边界）
 document.addEventListener('DOMContentLoaded', () => {
   init().catch(err => {
     console.error('❌❌❌ Content OS 启动失败！', err);
-    const safeMessage = H.esc(err && err.message ? err.message : String(err));
-    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;color:#dc2626"><div style="text-align:center"><h2 style="font-size:18px;margin-bottom:8px">启动失败</h2><p style="font-size:14px;color:#6b7280">'+safeMessage+'</p><p style="font-size:12px;color:#9ca3af;margin-top:12px">请刷新页面重试，或打开 Console 查看详细错误</p></div></div>';
+    try {
+      UI.dataLoading.show({ title:'运营后台启动失败', message:'正在分析错误...', detail:'检查页面、登录与数据服务' });
+      UI.dataLoading.fail(err, () => location.reload(), '运营后台');
+    } catch(_) {
+      const safeMessage = H.esc(err && err.message ? err.message : String(err));
+      document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;color:#dc2626"><div style="text-align:center"><h2 style="font-size:18px;margin-bottom:8px">启动失败</h2><p style="font-size:14px;color:#6b7280">'+safeMessage+'</p><p style="font-size:12px;color:#9ca3af;margin-top:12px">请刷新页面重试，或关闭 VPN 后再次打开</p></div></div>';
+    }
   });
 });
 
