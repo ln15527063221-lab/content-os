@@ -340,12 +340,105 @@
 <script>
 // 生产环境默认关闭调试日志，避免在 Console 输出业务数据；需要排查时可临时设为 true。
 window.CONTENT_OS_DEBUG = false;
-// ========== Supabase 客户端 ==========
+// ========== Supabase 客户端（Vercel 同域代理） ==========
+// 浏览器不再直接请求 supabase.co，而是请求本站 /api/supabase-proxy，
+// 再由 Vercel 服务端转发到 Supabase。这样可避免 VPN 分流导致“页面能打开、数据超时”。
+const CONTENT_OS_SUPABASE_URL = 'https://dcuwayvfawdcfqudfiku.supabase.co';
+const CONTENT_OS_SUPABASE_KEY = 'sb_publishable_HCimv1v-aZTc6SMbYeeztA_-JtzI8ad';
+const CONTENT_OS_SUPABASE_ORIGIN = new URL(CONTENT_OS_SUPABASE_URL).origin;
+const CONTENT_OS_PROXY_ENDPOINT = '/api/supabase-proxy';
+
+window.CONTENT_OS_PROXY_STATE = {
+  mode: 'proxy',
+  lastUsedAt: '',
+  lastError: ''
+};
+
+const contentOsSupabaseFetch = async (input, init = {}) => {
+  let request;
+  try {
+    request = input instanceof Request ? new Request(input, init) : new Request(input, init);
+  } catch (_) {
+    return fetch(input, init);
+  }
+
+  const targetUrl = new URL(request.url, window.location.href);
+  const proxyable = targetUrl.origin === CONTENT_OS_SUPABASE_ORIGIN && (
+    targetUrl.pathname.startsWith('/rest/v1/') ||
+    targetUrl.pathname.startsWith('/auth/v1/') ||
+    targetUrl.pathname.startsWith('/functions/v1/')
+  );
+
+  // Storage 上传与公开图片继续直连，避免大文件经过 Serverless 请求体限制。
+  if (!proxyable) return fetch(request);
+
+  const directFallbackRequest = request.clone();
+  const proxyUrl = new URL(CONTENT_OS_PROXY_ENDPOINT, window.location.origin);
+  proxyUrl.searchParams.set('path', targetUrl.pathname + targetUrl.search);
+
+  const method = String(request.method || 'GET').toUpperCase();
+  const headers = new Headers(request.headers);
+  headers.set('x-content-os-client', 'web');
+
+  const proxyInit = {
+    method,
+    headers,
+    signal: request.signal,
+    credentials: 'same-origin',
+    cache: 'no-store'
+  };
+  if (method !== 'GET' && method !== 'HEAD') {
+    proxyInit.body = await request.arrayBuffer();
+  }
+
+  try {
+    const response = await fetch(proxyUrl.toString(), proxyInit);
+    // API 文件尚未上传时，先回退原直连，避免其他电脑立即不可用。
+    if (response.status === 404 || response.status === 405) {
+      window.CONTENT_OS_PROXY_STATE = {
+        mode: 'direct-fallback',
+        lastUsedAt: new Date().toISOString(),
+        lastError: 'Vercel 代理接口未部署'
+      };
+      return fetch(directFallbackRequest);
+    }
+    window.CONTENT_OS_PROXY_STATE = {
+      mode: 'proxy',
+      lastUsedAt: new Date().toISOString(),
+      lastError: response.ok ? '' : `代理返回 HTTP ${response.status}`
+    };
+    return response;
+  } catch (error) {
+    window.CONTENT_OS_PROXY_STATE = {
+      mode: 'direct-fallback',
+      lastUsedAt: new Date().toISOString(),
+      lastError: error?.message || String(error)
+    };
+    return fetch(directFallbackRequest);
+  }
+};
+
 const SUPABASE = supabase.createClient(
-  'https://dcuwayvfawdcfqudfiku.supabase.co',
-  'sb_publishable_HCimv1v-aZTc6SMbYeeztA_-JtzI8ad'
+  CONTENT_OS_SUPABASE_URL,
+  CONTENT_OS_SUPABASE_KEY,
+  {
+    global: { fetch: contentOsSupabaseFetch },
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true
+    }
+  }
 );
-window.CONTENT_OS_DEBUG && console.log('⚡ Supabase 已连接');
+
+window.testContentOsProxy = async () => {
+  const response = await fetch(`${CONTENT_OS_PROXY_ENDPOINT}?health=1`, { cache:'no-store' });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload?.error || `代理检测失败（${response.status}）`);
+  return payload;
+};
+
+window.CONTENT_OS_DEBUG && console.log('⚡ Supabase 已通过 Vercel 同域代理连接');
 
 
 // ========== 网络超时、自动重试与错误诊断 ==========
@@ -375,10 +468,10 @@ window.CONTENT_OS_NETWORK = (() => {
       return { kind:'offline', title:'当前设备没有网络连接', message:'网络已断开，无法加载运营数据', detail:'请连接网络后点击“重新检测并加载”。' };
     }
     if(error?.code === 'NETWORK_TIMEOUT' || lower.includes('timeout') || lower.includes('timed out') || lower.includes('超时')) {
-      return { kind:'timeout', title:`${stage}连接超时`, message:`${stage}长时间没有响应`, detail:'VPN 节点可能无法访问 Supabase。请关闭 VPN、切换节点，或将 *.supabase.co 设置为直连。' };
+      return { kind:'timeout', title:`${stage}连接超时`, message:`${stage}长时间没有响应`, detail:'数据请求已改走 Vercel 同域代理。若仍超时，请确认 /api/supabase-proxy 已成功部署，并点击重新加载。' };
     }
     if(lower.includes('failed to fetch') || lower.includes('networkerror') || lower.includes('network request failed') || lower.includes('load failed') || lower.includes('err_connection') || lower.includes('err_name_not_resolved') || lower.includes('fetch failed')) {
-      return { kind:'network', title:`${stage}网络连接失败`, message:`浏览器无法连接 ${stage}`, detail:'网页本身已打开，但 VPN、代理或 DNS 可能拦截了 Supabase 请求。请关闭 VPN、切换节点，或设置 *.supabase.co 直连。' };
+      return { kind:'network', title:`${stage}网络连接失败`, message:`浏览器无法连接 ${stage}`, detail:'网页已打开，但 Vercel 数据代理连接失败。请确认 api/supabase-proxy.mjs 已上传并完成部署。' };
     }
     if(status === 401 || lower.includes('jwt') || lower.includes('invalid token') || lower.includes('not authenticated')) {
       return { kind:'auth', title:'登录状态已失效', message:'Supabase 登录凭证无效或已过期', detail:'请重新登录；如果管理员修改密码或停用账号，旧登录会自动失效。' };
@@ -389,7 +482,7 @@ window.CONTENT_OS_NETWORK = (() => {
     if(status >= 500 || lower.includes('502') || lower.includes('503') || lower.includes('gateway')) {
       return { kind:'service', title:`${stage}服务暂时不可用`, message:`${stage}返回了服务异常`, detail:'请稍后重新检测；如果仅开启 VPN 时出现，请切换节点或设置 Supabase 域名直连。' };
     }
-    return { kind:'unknown', title:`${stage}请求失败`, message:raw || `${stage}请求失败`, detail:'请点击“重新检测并加载”。若关闭 VPN 后恢复，建议将 *.supabase.co 设置为直连。' };
+    return { kind:'unknown', title:`${stage}请求失败`, message:raw || `${stage}请求失败`, detail:'请点击“重新检测并加载”。若持续失败，请检查 Vercel Functions 日志中的 supabase-proxy。' };
   };
 
   const withRetry = async (task, opts={}) => {
@@ -1211,7 +1304,7 @@ S.reloadContents = async () => {
       status:'error', fromCache:false, error:e?.message || String(e)
     };
     S._refreshContentViews();
-    try { UI.toast('内容库重新加载失败，请关闭 VPN、切换节点后再试', 'error'); } catch(_) {}
+    try { UI.toast('内容库重新加载失败，请检查 Vercel 数据代理后再试', 'error'); } catch(_) {}
     throw e;
   }
 };
@@ -1470,7 +1563,7 @@ S._updateIndicator = () => {
   if(el) {
     let last = '';
     try { last = localStorage.getItem('content_os_last_cloud_write') || localStorage.getItem('content_os_last_hotspot_sync') || ''; } catch(_) {}
-    el.innerHTML = '<span class="text-xs text-gray-500">☁️ Supabase</span>' + (last ? '<div class="text-[10px] text-gray-600 mt-0.5">最近同步 '+H.fmtDateTime(last)+'</div>' : '');
+    el.innerHTML = '<span class="text-xs text-gray-500">☁️ Supabase</span>' + (last ? '<div class="text-[10px] text-gray-600 mt-0.5">代理同步 '+H.fmtDateTime(last)+'</div>' : '');
   }
 };
 
@@ -2204,7 +2297,7 @@ UI.dataLoading = {
         current.message.textContent = '网络响应较慢，正在自动重试 Supabase 请求...';
         if(current.help) {
           current.help.classList.remove('hidden');
-          current.help.textContent = '若开启 VPN 后一直停在这里，请切换节点，或将 *.supabase.co 设置为直连。';
+          current.help.textContent = '数据将通过本站 Vercel 代理加载；若一直停在这里，请检查 /api/supabase-proxy 部署状态。';
         }
       }
     }, 8000);
@@ -2251,7 +2344,7 @@ UI.dataLoading = {
     el.percent.textContent = '—';
     if(el.help) {
       el.help.classList.remove('hidden');
-      el.help.textContent = info.detail || '请关闭 VPN、切换节点，或将 *.supabase.co 设置为直连。';
+      el.help.textContent = info.detail || '请检查 Vercel 同域代理是否部署成功，然后重新加载。';
     }
     el.retry.classList.remove('hidden');
     el.retry.onclick = async () => {
@@ -6530,7 +6623,7 @@ P._contentLoadStatusHtml = () => {
     </div>`;
   }
   return `<div class="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 flex items-center justify-between gap-4">
-    <div class="min-w-0"><div class="text-sm font-medium text-red-700">内容库与内容日历加载失败</div><div class="text-xs text-red-600 mt-0.5">${H.esc(st.error || '请关闭 VPN、切换节点，或将 *.supabase.co 设置为直连')}</div></div>
+    <div class="min-w-0"><div class="text-sm font-medium text-red-700">内容库与内容日历加载失败</div><div class="text-xs text-red-600 mt-0.5">${H.esc(st.error || '请检查 Vercel 同域代理是否部署成功')}</div></div>
     <button class="cos-btn cos-btn-secondary cos-btn-sm shrink-0" data-retry-contents>重新加载内容</button>
   </div>`;
 };
